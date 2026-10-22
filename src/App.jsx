@@ -18,6 +18,7 @@ import {
 } from './lib/renderVideo';
 import { ANIMATION_TYPES, getSlideAnimation } from './lib/animations';
 import VisualTimeline from './components/VisualTimeline';
+import SlideEllipseDrawer from './components/SlideEllipseDrawer';
 
 const MODELS = [
   { id: 'Xenova/whisper-tiny.en', label: 'Tiny, English (fast, rougher)' },
@@ -445,33 +446,37 @@ export default function App() {
             />
           </div>
 
-          {/* Interactive Visual Timeline visible on web app */}
+          {/* Professional Video Player Timeline (Scrollable & Zoomable) */}
           <VisualTimeline
             rows={rows}
             slides={slides}
             duration={duration}
             currentTime={currentTime}
+            isPlaying={isPlaying}
             imageUrls={imageUrls}
+            animationMode={animationMode}
+            slideAnimations={slideAnimations}
             onSeek={handleSeek}
+            onTogglePlay={() => {
+              if (audioRef.current) {
+                if (audioRef.current.paused) audioRef.current.play();
+                else audioRef.current.pause();
+              }
+            }}
           />
 
-          {/* Player controls */}
-          <div className="preview-controls">
-            <button
-              className="primary-btn"
-              onClick={() => {
-                if (audioRef.current) {
-                  if (audioRef.current.paused) audioRef.current.play();
-                  else audioRef.current.pause();
-                }
-              }}
-            >
-              {isPlaying ? '⏸ Pause' : '▶ Play Video'}
-            </button>
-            <span className="time-display">
-              {fmt(currentTime)} / {fmt(duration)}
-            </span>
-          </div>
+          {/* Collapsible Ellipse List of Slide Images & Animations */}
+          <SlideEllipseDrawer
+            rows={rows}
+            slides={slides}
+            duration={duration}
+            currentTime={currentTime}
+            imageUrls={imageUrls}
+            animationMode={animationMode}
+            slideAnimations={slideAnimations}
+            onSetSlideAnimation={setSlideAnimation}
+            onSeek={handleSeek}
+          />
 
           {/* Global Animation & Caption Style Settings */}
           <div className="customization-panel">
