@@ -13,13 +13,19 @@ export default function SlideEllipseDrawer({
   slides = [],
   duration = 0,
   currentTime = 0,
-  imageUrls = [],
+  effectiveImageUrls = [],
+  generatedImages = {},
   animationMode = 'random',
   slideAnimations = {},
+  slidePrompts = {},
   onSetSlideAnimation = () => {},
+  onSetSlidePrompt = () => {},
+  onGenerateSlideImage = () => {},
   onSeek = () => {},
+  isGenerating = false,
 }) {
   const [isOpen, setIsOpen] = useState(true);
+  const [editingPromptIndex, setEditingPromptIndex] = useState(null);
   const shelfRef = useRef(null);
 
   if (!rows || rows.length === 0) return null;
@@ -36,8 +42,13 @@ export default function SlideEllipseDrawer({
       <div className="ellipse-drawer-header">
         <div className="ellipse-header-left">
           <span className="drawer-icon">🎞️</span>
-          <strong>Slide Images &amp; Animation Shelf</strong>
+          <strong>Slide Images &amp; AI Prompt Shelf</strong>
           <span className="badge badge-info">{rows.length} Slides</span>
+          {Object.keys(generatedImages).length > 0 && (
+            <span className="badge badge-success">
+              ✨ {Object.keys(generatedImages).length} AI Generated
+            </span>
+          )}
         </div>
 
         <div className="ellipse-header-right">
@@ -46,7 +57,7 @@ export default function SlideEllipseDrawer({
               <button
                 type="button"
                 className="shelf-nav-btn"
-                onClick={() => scrollShelf(-300)}
+                onClick={() => scrollShelf(-320)}
                 title="Scroll shelf left"
               >
                 ◀
@@ -54,7 +65,7 @@ export default function SlideEllipseDrawer({
               <button
                 type="button"
                 className="shelf-nav-btn"
-                onClick={() => scrollShelf(300)}
+                onClick={() => scrollShelf(320)}
                 title="Scroll shelf right"
               >
                 ▶
@@ -80,10 +91,12 @@ export default function SlideEllipseDrawer({
             {rows.map((row, i) => {
               const nextStart = rows[i + 1] ? rows[i + 1].start : duration;
               const isActive = currentTime >= row.start && currentTime < nextStart;
-              const imgUrl = imageUrls[i];
+              const imgUrl = effectiveImageUrls[i];
+              const isAiGenerated = Boolean(generatedImages[i]);
               const slide = slides[i] || {};
               const currentAnim = slideAnimations[i] || 'auto';
               const assignedAutoAnim = getSlideAnimation(animationMode, i);
+              const currentPrompt = slidePrompts[i] ?? slide.text ?? '';
 
               return (
                 <div
@@ -102,10 +115,17 @@ export default function SlideEllipseDrawer({
                       />
                     ) : (
                       <div className="ellipse-thumb-placeholder">
-                        #{row.id}
+                        <span>#{row.id}</span>
+                        <small>No image</small>
                       </div>
                     )}
                     <span className="ellipse-badge-pill">#{row.id}</span>
+
+                    {isAiGenerated && (
+                      <span className="ellipse-ai-badge" title="Generated with AI">
+                        ✨ AI
+                      </span>
+                    )}
                   </div>
 
                   {/* Slide Timing info */}
@@ -134,10 +154,42 @@ export default function SlideEllipseDrawer({
                     </select>
                   </div>
 
-                  {/* Text snippet preview */}
-                  <p className="ellipse-card-snippet">
-                    {slide.text ? (slide.text.length > 55 ? `${slide.text.slice(0, 55)}…` : slide.text) : <em>No text</em>}
-                  </p>
+                  {/* AI Prompt / Script Snippet */}
+                  <div className="ellipse-prompt-area" onClick={(e) => e.stopPropagation()}>
+                    {editingPromptIndex === i ? (
+                      <textarea
+                        rows={2}
+                        className="ellipse-prompt-textarea"
+                        value={currentPrompt}
+                        onChange={(e) => onSetSlidePrompt(i, e.target.value)}
+                        onBlur={() => setEditingPromptIndex(null)}
+                        autoFocus
+                        placeholder="Image prompt for this slide..."
+                      />
+                    ) : (
+                      <div
+                        className="ellipse-prompt-display"
+                        onClick={() => setEditingPromptIndex(i)}
+                        title="Click to edit AI image prompt"
+                      >
+                        <span className="prompt-label">Prompt:</span>
+                        <p className="ellipse-card-snippet">
+                          {currentPrompt || <em>Click to add prompt…</em>}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Generate / Re-roll Button */}
+                    <button
+                      type="button"
+                      className="ellipse-gen-btn"
+                      disabled={isGenerating}
+                      onClick={() => onGenerateSlideImage(i)}
+                      title="Generate or re-roll AI image for this slide"
+                    >
+                      {isAiGenerated ? '🔄 Re-roll AI Image' : '🎨 Generate Image'}
+                    </button>
+                  </div>
                 </div>
               );
             })}

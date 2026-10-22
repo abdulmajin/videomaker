@@ -1290,3 +1290,203 @@ tr.active-row {
   font-size: 0.78rem;
   margin-top: 2px;
 }
+
+/* ====================================================
+   AI Image Generation Studio Styles
+   ==================================================== */
+.image-gen-section {
+  background: #0f192c;
+  border-color: #243552;
+}
+
+.section-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.section-header-row h2 {
+  margin: 0 0 4px;
+}
+
+.image-gen-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+@media (max-width: 640px) {
+  .image-gen-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.api-key-box {
+  background: #080d17;
+  border: 1px solid #1f2d44;
+  border-radius: 8px;
+  padding: 14px;
+  margin: 14px 0;
+}
+
+.api-key-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.api-key-input {
+  flex: 1;
+  font-family: monospace;
+  font-size: 0.88rem;
+}
+
+.link-highlight {
+  color: #38bdf8;
+  text-decoration: underline;
+}
+
+.gen-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.gen-progress-card {
+  margin-top: 16px;
+  background: #080d17;
+  border: 1px solid #1f2d44;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.status-success {
+  color: #34d399;
+  font-weight: 600;
+  margin-top: 12px;
+  font-size: 0.95rem;
+}
+
+.badge-success {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+
+/* Ellipse Drawer AI Enhancements */
+.ellipse-ai-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  background: linear-gradient(135deg, #0d9488, #3b82f6);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+.ellipse-prompt-area {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.ellipse-prompt-display {
+  background: #090e18;
+  border: 1px solid #1f293d;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  text-align: left;
+}
+
+.ellipse-prompt-display:hover {
+  border-color: #38bdf8;
+}
+
+.prompt-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #38bdf8;
+  display: block;
+}
+
+.ellipse-prompt-textarea {
+  font-size: 0.72rem;
+  padding: 6px 8px;
+  background: #090e18;
+  border: 1px solid #38bdf8;
+  border-radius: 6px;
+  color: #fff;
+  resize: vertical;
+}
+
+.ellipse-gen-btn {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #38bdf8;
+  cursor: pointer;
+  margin-top: 4px;
+  width: 100%;
+  transition: all 0.15s;
+}
+
+.ellipse-gen-btn:hover:not(:disabled) {
+  background: #2a3a52;
+  border-color: #38bdf8;
+  color: #fff;
+}
+
+/* Table Enhancements for AI Prompts */
+.table-img-cell {
+  position: relative;
+  display: inline-block;
+}
+
+.ai-tiny-tag {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  background: #0d9488;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 800;
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+.table-prompt-input {
+  width: 100%;
+  font-size: 0.84rem;
+  padding: 6px 10px;
+  background: #090e18;
+  border: 1px solid #233148;
+  border-radius: 6px;
+  color: #f1f5f9;
+}
+
+.table-prompt-input:focus {
+  border-color: #38bdf8;
+}
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}

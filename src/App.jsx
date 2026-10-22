@@ -17,6 +17,12 @@ import {
   CAPTION_STYLES,
 } from './lib/renderVideo';
 import { ANIMATION_TYPES, getSlideAnimation } from './lib/animations';
+import {
+  IMAGE_ENGINES,
+  IMAGE_STYLES,
+  generateSlideImage,
+  enhancePrompt,
+} from './lib/imageGen';
 import VisualTimeline from './components/VisualTimeline';
 import SlideEllipseDrawer from './components/SlideEllipseDrawer';
 
@@ -63,6 +69,18 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
 
+  // AI Image Generation State
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem('google_ai_key') || '');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [imageEngine, setImageEngine] = useState('google-imagen');
+  const [visualStyle, setVisualStyle] = useState('cinematic');
+  const [slidePrompts, setSlidePrompts] = useState({});
+  const [generatedImages, setGeneratedImages] = useState({});
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [genStatus, setGenStatus] = useState('');
+  const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
+  const abortGenRef = useRef(false);
+
   // Animation & Caption Customization
   const [animationMode, setAnimationMode] = useState('random');
   const [slideAnimations, setSlideAnimations] = useState({});
@@ -90,6 +108,15 @@ export default function App() {
     [matched]
   );
 
+  // Prioritize AI Generated image, then uploaded matched image
+  const effectiveImageUrls = useMemo(() => {
+    return slides.map((s, i) => {
+      if (generatedImages[i]?.url) return generatedImages[i].url;
+      if (imageUrls[i]) return imageUrls[i];
+      return null;
+    });
+  }, [slides, generatedImages, imageUrls]);
+
   // Clean up object URLs
   useEffect(() => {
     return () => {
@@ -97,16 +124,22 @@ export default function App() {
     };
   }, [audioUrl]);
 
-  // Preload images whenever imageUrls change
+  // Preload images whenever effectiveImageUrls change
   useEffect(() => {
     let active = true;
-    preloadImages(imageUrls).then((imgs) => {
+    preloadImages(effectiveImageUrls).then((imgs) => {
       if (active) preloadedImagesRef.current = imgs;
     });
     return () => {
       active = false;
     };
-  }, [imageUrls]);
+  }, [effectiveImageUrls]);
+
+  // Save API key
+  const handleApiKeyChange = (val) => {
+    setApiKey(val);
+    localStorage.setItem('google_ai_key', val.trim());
+  };
 
   // Render a preview frame onto the canvas
   const renderCurrentPreview = useCallback(
@@ -168,6 +201,137 @@ export default function App() {
   const setSlideAnimation = (idx, animId) => {
     setSlideAnimations((prev) => ({ ...prev, [idx]: animId }));
     setTimeout(() => renderCurrentPreview(currentTime), 20);
+  };
+
+  const setSlidePrompt = (idx, val) => {
+    setSlidePrompts((prev) => ({ ...prev, [idx]: val }));
+  };
+
+  // AI Image Generation: Single Slide
+  async function handleGenerateSingleImage(index) {
+    const slide = slides[index];
+    if (!slide) return;
+    const prompt = slidePrompts[index] || slide.text;
+    if (!prompt) return;
+
+    if (imageEngine === 'google-imagen' && !apiKey.trim()) {
+      setError('Please enter your Google AI Studio API key in Section 3, or select Instant Free AI.');
+      return;
+    }
+
+    setError('');
+    setIsGenerating(true);
+    setGenStatus(`Generating AI image for Slide #${slide.id}…`);
+
+    try {
+      const res = await generateSlideImage({
+        prompt,
+        apiKey,
+        engine: imageEngine,
+        style: visualStyle,
+      });
+
+      const url = URL.createObjectURL(res.blob);
+      setGeneratedImages((prev) => ({
+        ...prev,
+        [index]: { blob: res.blob, url, prompt, engine: res.engine },
+      }));
+      setGenStatus(`✨ Slide #${slide.id} image ready and attached!`);
+      setTimeout(() => renderCurrentPreview(currentTime), 60);
+    } catch (err) {
+      setError(`Image generation error: ${err.message}`);
+      setGenStatus('');
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
+  // AI Image Generation: Batch All Slides
+  async function handleGenerateAllImages() {
+    if (!slides.length) {
+      setError('Please add your script first so slides can be generated.');
+      return;
+    }
+
+    if (imageEngine === 'google-imagen' && !apiKey.trim()) {
+      setError('Please enter your Google AI Studio API key in Section 3, or select Instant Free AI.');
+      return;
+    }
+
+    setError('');
+    setIsGenerating(true);
+    abortGenRef.current = false;
+    setGenProgress({ current: 0, total: slides.length });
+
+    try {
+      for (let i = 0; i < slides.length; i++) {
+        if (abortGenRef.current) {
+          setGenStatus('Generation cancelled.');
+          break;
+        }
+
+        const slide = slides[i];
+        const prompt = slidePrompts[i] || slide.text;
+        setGenProgress({ current: i + 1, total: slides.length });
+        setGenStatus(
+          `Generating image ${i + 1} of ${slides.length} (Slide #${slide.id}) using ${
+            imageEngine === 'google-imagen' ? 'Google Imagen 3' : 'Free AI'
+          }…`
+        );
+
+        const res = await generateSlideImage({
+          prompt,
+          apiKey,
+          engine: imageEngine,
+          style: visualStyle,
+        });
+
+        const url = URL.createObjectURL(res.blob);
+        setGeneratedImages((prev) => ({
+          ...prev,
+          [i]: { blob: res.blob, url, prompt, engine: res.engine },
+        }));
+
+        setTimeout(() => renderCurrentPreview(currentTime), 30);
+
+        // Pause briefly between requests to ensure clean rate-limit handling
+        if (i < slides.length - 1) {
+          await new Promise((r) => setTimeout(r, 600));
+        }
+      }
+
+      if (!abortGenRef.current) {
+        setGenStatus(`🎉 Generated all ${slides.length} slide images! Synced to speech timestamps.`);
+      }
+    } catch (err) {
+      setError(`Generation stopped: ${err.message}`);
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
+  // Auto-fill / enhance prompts for all slides
+  const handleAutoFillPrompts = () => {
+    const updated = {};
+    slides.forEach((s, i) => {
+      updated[i] = enhancePrompt(s.text, visualStyle);
+    });
+    setSlidePrompts(updated);
+    setGenStatus('✨ Updated prompts for all slides with chosen visual style.');
+  };
+
+  // Download all generated images to local machine
+  const handleDownloadAllImages = () => {
+    const indices = Object.keys(generatedImages);
+    if (!indices.length) return;
+    indices.forEach((key, delayIndex) => {
+      const item = generatedImages[key];
+      if (item?.blob) {
+        setTimeout(() => {
+          downloadBlob(item.blob, `slide_${Number(key) + 1}.jpg`);
+        }, delayIndex * 300);
+      }
+    });
   };
 
   async function onScriptFile(file) {
@@ -234,7 +398,7 @@ export default function App() {
         audioFile: audio,
         rows,
         slides,
-        imageUrls,
+        imageUrls: effectiveImageUrls,
         duration,
         title,
         width: w,
@@ -308,12 +472,12 @@ export default function App() {
         <div className="header-badge">Video Maker Studio v1.0</div>
         <h1>AI Slide Video Maker</h1>
         <p>
-          Add images, a voiceover, and your script. Align audio with speech recognition, customize
-          Canva-style animations per slide, and export your video and subtitles.
+          Generate slide images automatically using Google Flow / Imagen 3, align speech timestamps
+          with Whisper, customize Canva-style animations, and export your video.
         </p>
       </header>
 
-      {/* Input Section */}
+      {/* 1. Project Inputs Section */}
       <section>
         <h2>1. Project Inputs</h2>
         <div className="grid-2">
@@ -326,33 +490,33 @@ export default function App() {
             />
           </label>
           <label>
-            Script (.docx, .pdf or .txt)
-            <input
-              type="file"
-              accept=".docx,.pdf,.txt"
-              onChange={(e) => onScriptFile(e.target.files[0])}
-            />
-          </label>
-        </div>
-
-        <div className="grid-2">
-          <label>
-            Images (select multiple)
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={(e) => setImages([...e.target.files])}
-            />
-            <small>{images.length} images selected. (Name slide1.jpg, slide2.jpg to auto-order)</small>
-          </label>
-          <label>
             Voice recording (audio file)
             <input
               type="file"
               accept="audio/*"
               onChange={(e) => setAudio(e.target.files[0] || null)}
             />
+          </label>
+        </div>
+
+        <div className="grid-2">
+          <label>
+            Script Document (.docx, .pdf or .txt)
+            <input
+              type="file"
+              accept=".docx,.pdf,.txt"
+              onChange={(e) => onScriptFile(e.target.files[0])}
+            />
+          </label>
+          <label>
+            Optional: Upload custom images (or generate with AI below)
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={(e) => setImages([...e.target.files])}
+            />
+            <small>{images.length} uploaded files. (You can also generate images with AI)</small>
           </label>
         </div>
 
@@ -376,7 +540,7 @@ export default function App() {
         )}
       </section>
 
-      {/* Script Section */}
+      {/* 2. Script Section */}
       <section>
         <h2>2. Script Content</h2>
         <p className="hint">
@@ -392,17 +556,173 @@ export default function App() {
           <span className="badge">
             {slides.length ? `${slides.length} slides detected` : 'No slides detected'}
           </span>
+          {Object.keys(generatedImages).length > 0 && (
+            <span className="badge badge-success">
+              ✨ {Object.keys(generatedImages).length} AI images generated
+            </span>
+          )}
           {images.length > 0 && (
             <span className="badge badge-info">
-              {matched.filter(Boolean).length} / {slides.length} slides matched with images
+              📁 {matched.filter(Boolean).length} uploaded images matched
             </span>
           )}
         </div>
       </section>
 
-      {/* Alignment Section */}
+      {/* 3. AI Image Generation Studio (Google Flow / Imagen 3) */}
+      <section className="image-gen-section">
+        <div className="section-header-row">
+          <div>
+            <h2>3. AI Image Generation Studio (Google Flow / Imagen 3)</h2>
+            <p className="hint">
+              Generate 16:9 widescreen images directly from your script prompts line-by-line without uploading files.
+            </p>
+          </div>
+          <span className="badge badge-info">Google Imagen 3 Ready</span>
+        </div>
+
+        <div className="image-gen-grid">
+          {/* Engine Selector */}
+          <label>
+            Image Generation Engine:
+            <select
+              value={imageEngine}
+              onChange={(e) => setImageEngine(e.target.value)}
+              disabled={isGenerating}
+            >
+              {IMAGE_ENGINES.map((eng) => (
+                <option key={eng.id} value={eng.id}>
+                  {eng.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {/* Visual Style Preset */}
+          <label>
+            Visual Art Style:
+            <select
+              value={visualStyle}
+              onChange={(e) => setVisualStyle(e.target.value)}
+              disabled={isGenerating}
+            >
+              {IMAGE_STYLES.map((st) => (
+                <option key={st.id} value={st.id}>
+                  {st.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {/* API Key Input for Google Imagen 3 */}
+        {imageEngine === 'google-imagen' && (
+          <div className="api-key-box">
+            <label>
+              Google AI Studio API Key:
+              <div className="api-key-input-row">
+                <input
+                  type={showApiKey ? 'text' : 'password'}
+                  value={apiKey}
+                  onChange={(e) => handleApiKeyChange(e.target.value)}
+                  placeholder="AIzaSy..."
+                  className="api-key-input"
+                />
+                <button
+                  type="button"
+                  className="ghost small-btn"
+                  onClick={() => setShowApiKey((v) => !v)}
+                >
+                  {showApiKey ? 'Hide' : 'Show'}
+                </button>
+              </div>
+              <small>
+                Get your free API key at{' '}
+                <a
+                  href="https://aistudio.google.com/app/apikey"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="link-highlight"
+                >
+                  aistudio.google.com
+                </a>{' '}
+                (stored securely in your browser's localStorage).
+              </small>
+            </label>
+          </div>
+        )}
+
+        {/* Action Buttons Bar */}
+        <div className="gen-actions-bar">
+          <button
+            type="button"
+            className="primary-btn"
+            disabled={isGenerating || slides.length === 0}
+            onClick={handleGenerateAllImages}
+          >
+            {isGenerating ? '⏳ Generating in progress…' : '🚀 Generate Images for ALL Slides'}
+          </button>
+
+          <button
+            type="button"
+            className="ghost"
+            disabled={isGenerating || slides.length === 0}
+            onClick={handleAutoFillPrompts}
+            title="Automatically format prompts from script with chosen style"
+          >
+            ✨ Enhance Prompts from Script
+          </button>
+
+          {Object.keys(generatedImages).length > 0 && (
+            <button
+              type="button"
+              className="ghost"
+              onClick={handleDownloadAllImages}
+              title="Download all generated image files"
+            >
+              💾 Download All Generated Images ({Object.keys(generatedImages).length})
+            </button>
+          )}
+
+          {isGenerating && (
+            <button
+              type="button"
+              className="danger-btn"
+              onClick={() => {
+                abortGenRef.current = true;
+                setIsGenerating(false);
+              }}
+            >
+              Stop Generation
+            </button>
+          )}
+        </div>
+
+        {/* Generation Progress Bar */}
+        {isGenerating && (
+          <div className="gen-progress-card">
+            <div className="progress-bar-bg">
+              <div
+                className="progress-bar-fill"
+                style={{
+                  width: `${
+                    genProgress.total > 0
+                      ? Math.round((genProgress.current / genProgress.total) * 100)
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
+            <p className="status">{genStatus}</p>
+          </div>
+        )}
+
+        {genStatus && !isGenerating && <p className="status-success">{genStatus}</p>}
+      </section>
+
+      {/* 4. Alignment Section */}
       <section>
-        <h2>3. Speech-to-Text &amp; Alignment</h2>
+        <h2>4. Speech-to-Text &amp; Alignment</h2>
         <div className="row">
           <select value={model} onChange={(e) => setModel(e.target.value)}>
             {MODELS.map((m) => (
@@ -425,18 +745,18 @@ export default function App() {
         {!audio && <p className="hint">Upload a voice recording above to enable transcription.</p>}
       </section>
 
-      {/* Synchronized Live Video Preview & Controls */}
+      {/* 5. Synchronized Live Video Preview & Controls */}
       {rows.length > 0 && (
         <section className="preview-section">
           <div className="preview-header-bar">
-            <h2>4. Live Synced Video Preview</h2>
+            <h2>5. Live Synced Video Preview</h2>
             <span className="badge badge-info">Clean Video Mode</span>
           </div>
           <p className="hint">
-            Watch slide animations synchronize with the voiceover in real time. Use the interactive timeline below to scrub through your video.
+            Slide images, animations, and voiceover are synchronized in real time. Use the video timeline below to scrub through your video.
           </p>
 
-          {/* Clean Canvas Rendering Frame (No progress bar inside video) */}
+          {/* Clean Canvas Rendering Frame */}
           <div className="video-player-frame">
             <canvas
               ref={previewCanvasRef}
@@ -453,7 +773,7 @@ export default function App() {
             duration={duration}
             currentTime={currentTime}
             isPlaying={isPlaying}
-            imageUrls={imageUrls}
+            imageUrls={effectiveImageUrls}
             animationMode={animationMode}
             slideAnimations={slideAnimations}
             onSeek={handleSeek}
@@ -465,17 +785,22 @@ export default function App() {
             }}
           />
 
-          {/* Collapsible Ellipse List of Slide Images & Animations */}
+          {/* Collapsible Ellipse List of Slide Images, Prompts & Animations */}
           <SlideEllipseDrawer
             rows={rows}
             slides={slides}
             duration={duration}
             currentTime={currentTime}
-            imageUrls={imageUrls}
+            effectiveImageUrls={effectiveImageUrls}
+            generatedImages={generatedImages}
             animationMode={animationMode}
             slideAnimations={slideAnimations}
+            slidePrompts={slidePrompts}
             onSetSlideAnimation={setSlideAnimation}
+            onSetSlidePrompt={setSlidePrompt}
+            onGenerateSlideImage={handleGenerateSingleImage}
             onSeek={handleSeek}
+            isGenerating={isGenerating}
           />
 
           {/* Global Animation & Caption Style Settings */}
@@ -483,7 +808,7 @@ export default function App() {
             <h3>🎨 Global Animation &amp; Caption Style Settings</h3>
             <div className="customization-grid">
               <label>
-                Default / Fallback Animation:
+                Default Animation Style:
                 <select
                   value={animationMode}
                   onChange={(e) => {
@@ -522,24 +847,24 @@ export default function App() {
         </section>
       )}
 
-      {/* Timeline Editor with Per-Slide Animation Selectors */}
+      {/* 6. Timeline Editor & Prompt Adjustments Table */}
       {rows.length > 0 && (
         <section>
-          <h2>5. Slide Timeline &amp; Animation Styles</h2>
+          <h2>6. Slide Timeline, Prompts &amp; Animation Styles</h2>
           <p className="hint">
-            Customize the animation style for each individual slide below, or adjust start timings.
+            Customize image prompts, generate/re-roll images, or choose specific animations per slide.
           </p>
           <table>
             <thead>
               <tr>
                 <th>Slide</th>
                 <th>Image</th>
+                <th>AI Prompt</th>
                 <th>Animation Style</th>
-                <th>Script Text</th>
                 <th>Start (s)</th>
                 <th>End</th>
                 <th>Match</th>
-                <th>Preview</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -548,6 +873,9 @@ export default function App() {
                 const isActive = activeSlideIndex === i;
                 const assignedAutoAnim = getSlideAnimation(animationMode, i);
                 const currentSlideAnim = slideAnimations[i] || 'auto';
+                const currentPrompt = slidePrompts[i] ?? slides[i]?.text ?? '';
+                const imgUrl = effectiveImageUrls[i];
+                const isAi = Boolean(generatedImages[i]);
 
                 return (
                   <tr
@@ -558,18 +886,29 @@ export default function App() {
                       <strong>#{row.id}</strong>
                     </td>
                     <td>
-                      {imageUrls[i] ? (
-                        <img
-                          src={imageUrls[i]}
-                          alt={`Slide ${row.id}`}
-                          className="table-thumb"
-                        />
-                      ) : (
-                        <span className="muted-text">none</span>
-                      )}
+                      <div className="table-img-cell">
+                        {imgUrl ? (
+                          <img
+                            src={imgUrl}
+                            alt={`Slide ${row.id}`}
+                            className="table-thumb"
+                          />
+                        ) : (
+                          <span className="muted-text">none</span>
+                        )}
+                        {isAi && <span className="ai-tiny-tag">AI</span>}
+                      </div>
+                    </td>
+                    <td className="text">
+                      <input
+                        type="text"
+                        className="table-prompt-input"
+                        value={currentPrompt}
+                        onChange={(e) => setSlidePrompt(i, e.target.value)}
+                        placeholder="Image prompt for this slide..."
+                      />
                     </td>
                     <td>
-                      {/* Interactive Animation Selector for this Slide */}
                       <select
                         className="table-anim-select"
                         value={currentSlideAnim}
@@ -588,7 +927,6 @@ export default function App() {
                         <option value="pan-drift">🌊 Pan &amp; Drift</option>
                       </select>
                     </td>
-                    <td className="text">{slides[i]?.text}</td>
                     <td>
                       <input
                         type="number"
@@ -607,9 +945,24 @@ export default function App() {
                       </span>
                     </td>
                     <td>
-                      <button className="ghost small-btn" onClick={() => playFrom(row.start)}>
-                        Play
-                      </button>
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className="ghost small-btn"
+                          disabled={isGenerating}
+                          onClick={() => handleGenerateSingleImage(i)}
+                          title="Generate or re-roll image for this slide"
+                        >
+                          {isAi ? '🔄 Re-roll' : '🎨 Generate'}
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost small-btn"
+                          onClick={() => playFrom(row.start)}
+                        >
+                          Play
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -619,17 +972,17 @@ export default function App() {
         </section>
       )}
 
-      {/* Export Section */}
+      {/* 7. Export Section */}
       {rows.length > 0 && (
         <section className="export-section">
-          <h2>6. Export Finished Video &amp; Subtitles</h2>
+          <h2>7. Export Finished Video &amp; Subtitles</h2>
 
           <div className="export-grid">
-            {/* Option 2: Video Export Card */}
+            {/* Video Export Card */}
             <div className="export-card">
               <h3>🎬 Render &amp; Export Video</h3>
               <p className="hint">
-                Generates a clean video with your selected per-slide animations, voiceover, and captions.
+                Generates a clean video with AI-generated images, animations, voiceover, and captions.
               </p>
 
               <div className="export-options">
@@ -648,10 +1001,13 @@ export default function App() {
                 <div className="export-summary-pills">
                   <span className="badge badge-info">
                     {Object.values(slideAnimations).filter((v) => v !== 'auto').length > 0
-                      ? `${Object.values(slideAnimations).filter((v) => v !== 'auto').length} customized animations`
+                      ? `${Object.values(slideAnimations).filter((v) => v !== 'auto').length} custom animations`
                       : `Global Mode: ${animationMode}`}
                   </span>
                   <span className="badge">Captions: {captionStyle}</span>
+                  <span className="badge badge-success">
+                    {Object.keys(generatedImages).length} AI images applied
+                  </span>
                 </div>
               </div>
 
@@ -697,7 +1053,7 @@ export default function App() {
               )}
             </div>
 
-            {/* Option 3: Subtitles & Data Export Card */}
+            {/* Subtitles & Data Export Card */}
             <div className="export-card">
               <h3>📝 Subtitles &amp; Timeline Data</h3>
               <p className="hint">
@@ -717,7 +1073,7 @@ export default function App() {
 
                 <button className="ghost export-btn" onClick={handleExportJson}>
                   <span>Download <strong>.JSON</strong> Timeline</span>
-                  <small>Full metadata with slide IDs, animations, and timestamps</small>
+                  <small>Full metadata with slide IDs, prompts, and timestamps</small>
                 </button>
               </div>
             </div>

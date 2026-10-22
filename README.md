@@ -8,6 +8,12 @@ It synchronizes slide images and scripts with a recorded voiceover using OpenAI 
 
 ## ✨ Features
 
+- 🎨 **Google AI Image Generation (Google Flow / Imagen 3)**:
+  - Generates photorealistic 16:9 widescreen images directly from slide script prompts line-by-line.
+  - Powered by Google's official **Imagen 3** (`imagen-3.0-generate-002`) and includes an instant free engine option.
+  - Automatically waits, downloads, and maps generated images to the corresponding voiceover timestamps.
+  - One-click prompt enhancement with visual style presets (Cinematic, Documentary, Digital Art, Anime, 3D Render).
+
 - 🎙️ **In-Browser Speech Recognition**:
   - Transcribes audio locally using Whisper models (`Xenova/whisper-tiny.en`, `Xenova/whisper-base.en`) via `@huggingface/transformers`.
   - Runs in a background Web Worker with word-level timestamps without needing external API keys.
