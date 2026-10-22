@@ -1,4 +1,4 @@
-# AI Slide Video Maker
+# AI Slide Video Maker (v1.0)
 
 An automated browser-based slide timing, animation, and video rendering studio built with **React 18** and **Vite**.
 

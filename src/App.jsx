@@ -304,7 +304,7 @@ export default function App() {
   return (
     <main>
       <header>
-        <div className="header-badge">Video Maker Studio</div>
+        <div className="header-badge">Video Maker Studio v1.0</div>
         <h1>AI Slide Video Maker</h1>
         <p>
           Add images, a voiceover, and your script. Align audio with speech recognition, customize
