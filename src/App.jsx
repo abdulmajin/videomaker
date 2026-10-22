@@ -25,6 +25,7 @@ import {
 } from './lib/imageGen';
 import VisualTimeline from './components/VisualTimeline';
 import SlideEllipseDrawer from './components/SlideEllipseDrawer';
+import ImagePreviewModal from './components/ImagePreviewModal';
 
 const MODELS = [
   { id: 'Xenova/whisper-tiny.en', label: 'Tiny, English (fast, rougher)' },
@@ -69,6 +70,10 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
 
+  // Input Selection Mode: 'doc' | 'textbox' | 'images' | 'aigen'
+  const [inputMode, setInputMode] = useState('doc');
+  const [uploadedDocName, setUploadedDocName] = useState('');
+
   // AI Image Generation State
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('google_ai_key') || '');
   const [showApiKey, setShowApiKey] = useState(false);
@@ -80,6 +85,9 @@ export default function App() {
   const [genStatus, setGenStatus] = useState('');
   const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
   const abortGenRef = useRef(false);
+
+  // Full-Screen Image Lightbox Preview Modal
+  const [previewModalIndex, setPreviewModalIndex] = useState(null);
 
   // Animation & Caption Customization
   const [animationMode, setAnimationMode] = useState('random');
@@ -249,7 +257,7 @@ export default function App() {
   // AI Image Generation: Batch All Slides
   async function handleGenerateAllImages() {
     if (!slides.length) {
-      setError('Please add your script first so slides can be generated.');
+      setError('Please add your script or prompts first.');
       return;
     }
 
@@ -266,7 +274,7 @@ export default function App() {
     try {
       for (let i = 0; i < slides.length; i++) {
         if (abortGenRef.current) {
-          setGenStatus('Generation cancelled.');
+          setGenStatus('Generation stopped.');
           break;
         }
 
@@ -334,11 +342,26 @@ export default function App() {
     });
   };
 
+  // Download single image
+  const handleDownloadSingleImage = (index) => {
+    const item = generatedImages[index];
+    if (item?.blob) {
+      downloadBlob(item.blob, `slide_${index + 1}.jpg`);
+    } else if (imageUrls[index]) {
+      const a = document.createElement('a');
+      a.href = imageUrls[index];
+      a.download = `slide_${index + 1}.jpg`;
+      a.click();
+    }
+  };
+
   async function onScriptFile(file) {
     if (!file) return;
     setError('');
+    setUploadedDocName(file.name);
     try {
-      setScriptText(await readDoc(file));
+      const text = await readDoc(file);
+      setScriptText(text);
     } catch (e) {
       setError(`Could not read the script: ${e.message}`);
     }
@@ -456,7 +479,7 @@ export default function App() {
 
   const ready = audio && slides.length > 0 && !status;
 
-  // Find active slide index
+  // Active slide index in timeline playback
   let activeSlideIndex = 0;
   for (let i = 0; i < rows.length; i++) {
     if (currentTime >= rows[i].start) {
@@ -466,20 +489,29 @@ export default function App() {
     }
   }
 
+  const pendingVisualsCount = Math.max(
+    0,
+    slides.length - effectiveImageUrls.filter(Boolean).length
+  );
+  const visualReadinessPct =
+    slides.length > 0
+      ? Math.min(100, Math.round((effectiveImageUrls.filter(Boolean).length / slides.length) * 100))
+      : 0;
+
   return (
     <main>
       <header>
         <div className="header-badge">Video Maker Studio v1.0</div>
         <h1>AI Slide Video Maker</h1>
         <p>
-          Generate slide images automatically using Google Flow / Imagen 3, align speech timestamps
-          with Whisper, customize Canva-style animations, and export your video.
+          Select your input method, upload files or type line-by-line prompts, generate visuals with
+          Google Flow / Imagen 3, preview in high-res, and export your finished video.
         </p>
       </header>
 
-      {/* 1. Project Inputs Section */}
+      {/* 1. Global Project Title & Voice Recording Section */}
       <section>
-        <h2>1. Project Inputs</h2>
+        <h2>1. Project Audio &amp; Title</h2>
         <div className="grid-2">
           <label>
             Video title
@@ -496,27 +528,6 @@ export default function App() {
               accept="audio/*"
               onChange={(e) => setAudio(e.target.files[0] || null)}
             />
-          </label>
-        </div>
-
-        <div className="grid-2">
-          <label>
-            Script Document (.docx, .pdf or .txt)
-            <input
-              type="file"
-              accept=".docx,.pdf,.txt"
-              onChange={(e) => onScriptFile(e.target.files[0])}
-            />
-          </label>
-          <label>
-            Optional: Upload custom images (or generate with AI below)
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={(e) => setImages([...e.target.files])}
-            />
-            <small>{images.length} uploaded files. (You can also generate images with AI)</small>
           </label>
         </div>
 
@@ -540,32 +551,167 @@ export default function App() {
         )}
       </section>
 
-      {/* 2. Script Section */}
-      <section>
-        <h2>2. Script Content</h2>
-        <p className="hint">
-          Format slides as &quot;Slide 1: [content]&quot;. Edit here anytime; slides update dynamically.
-        </p>
-        <textarea
-          rows={6}
-          value={scriptText}
-          onChange={(e) => setScriptText(e.target.value)}
-          placeholder={'Slide 1: Welcome to our lesson today.\nSlide 2: In this part, we explore the solar system.'}
-        />
-        <div className="script-stats">
-          <span className="badge">
-            {slides.length ? `${slides.length} slides detected` : 'No slides detected'}
-          </span>
-          {Object.keys(generatedImages).length > 0 && (
-            <span className="badge badge-success">
-              ✨ {Object.keys(generatedImages).length} AI images generated
+      {/* 2. Input Method Selector Tabs (Doc Upload, Text Box, Images, AI Prompts) */}
+      <section className="input-method-section">
+        <div className="section-header-row">
+          <div>
+            <h2>2. Script &amp; Image Input Selection</h2>
+            <p className="hint">Choose how you want to provide your script, prompts, or visuals:</p>
+          </div>
+        </div>
+
+        {/* Mode Selector Tabs */}
+        <div className="input-mode-tabs">
+          <button
+            type="button"
+            className={`input-mode-tab ${inputMode === 'doc' ? 'active' : ''}`}
+            onClick={() => setInputMode('doc')}
+          >
+            📁 Document File (.pdf, .docx, .txt, .csv)
+          </button>
+          <button
+            type="button"
+            className={`input-mode-tab ${inputMode === 'textbox' ? 'active' : ''}`}
+            onClick={() => setInputMode('textbox')}
+          >
+            ✍️ Direct Text Box (Type / Paste)
+          </button>
+          <button
+            type="button"
+            className={`input-mode-tab ${inputMode === 'images' ? 'active' : ''}`}
+            onClick={() => setInputMode('images')}
+          >
+            🖼️ Upload Images ({images.length})
+          </button>
+          <button
+            type="button"
+            className={`input-mode-tab ${inputMode === 'aigen' ? 'active' : ''}`}
+            onClick={() => setInputMode('aigen')}
+          >
+            ✨ AI Prompt Studio (Google Flow)
+          </button>
+        </div>
+
+        {/* Tab 1: Document Upload (.pdf, .docx, .txt, .csv) */}
+        {inputMode === 'doc' && (
+          <div className="tab-pane">
+            <div className="file-drop-card">
+              <label className="file-upload-label">
+                <span className="file-upload-icon">📄</span>
+                <strong>Choose a Script File (.pdf, .docx, .txt, or .csv)</strong>
+                <span className="file-upload-hint">
+                  Supports PDF documents, Word .docx, plain text, and structured CSV spreadsheets.
+                </span>
+                <input
+                  type="file"
+                  accept=".docx,.pdf,.txt,.csv"
+                  onChange={(e) => onScriptFile(e.target.files[0])}
+                  className="hidden-file-input"
+                />
+                <span className="browse-files-btn">Browse Files</span>
+              </label>
+              {uploadedDocName && (
+                <div className="uploaded-file-tag">
+                  <span>✓ Loaded: <strong>{uploadedDocName}</strong></span>
+                  <small>({slides.length} slides detected)</small>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Tab 2: Direct Text Box */}
+        {inputMode === 'textbox' && (
+          <div className="tab-pane">
+            <p className="hint">
+              Type or paste your text line by line or as &quot;Slide 1: [content]&quot;. Slides update automatically.
+            </p>
+            <textarea
+              rows={7}
+              value={scriptText}
+              onChange={(e) => setScriptText(e.target.value)}
+              placeholder={
+                'Slide 1: Welcome to our lesson today.\nSlide 2: In this part, we explore the solar system.\nSlide 3: Here is a futuristic spacecraft approaching Mars.'
+              }
+            />
+          </div>
+        )}
+
+        {/* Tab 3: Local Images Upload */}
+        {inputMode === 'images' && (
+          <div className="tab-pane">
+            <label>
+              Select Image Files from your computer:
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(e) => setImages([...e.target.files])}
+              />
+              <small>
+                {images.length} images selected. Name them slide1.jpg, slide2.jpg to auto-order, or they match in sequence.
+              </small>
+            </label>
+
+            {images.length > 0 && (
+              <div className="uploaded-thumbs-gallery">
+                {imageUrls.map((url, idx) => (
+                  <div
+                    key={idx}
+                    className="uploaded-thumb-chip"
+                    onClick={() => setPreviewModalIndex(idx)}
+                    title="Click to view preview"
+                  >
+                    {url && <img src={url} alt={`Uploaded ${idx + 1}`} />}
+                    <span>#{idx + 1}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 4: AI Prompt Studio Quick View */}
+        {inputMode === 'aigen' && (
+          <div className="tab-pane">
+            <p className="hint">
+              Generate 16:9 widescreen images directly from prompts line-by-line using Google Imagen 3 (Google Flow Engine). See Section 3 below to run generation!
+            </p>
+          </div>
+        )}
+
+        {/* Image Prompt Count Metrics Card */}
+        <div className="prompt-metrics-card">
+          <div className="metrics-col">
+            <span className="metrics-num">{slides.length}</span>
+            <span className="metrics-label">Image Prompts / Slides</span>
+          </div>
+          <div className="metrics-col">
+            <span className="metrics-num text-success">
+              {Object.keys(generatedImages).length}
             </span>
-          )}
-          {images.length > 0 && (
-            <span className="badge badge-info">
-              📁 {matched.filter(Boolean).length} uploaded images matched
-            </span>
-          )}
+            <span className="metrics-label">AI Generated</span>
+          </div>
+          <div className="metrics-col">
+            <span className="metrics-num text-info">{images.length}</span>
+            <span className="metrics-label">Uploaded Files</span>
+          </div>
+          <div className="metrics-col">
+            <span className="metrics-num text-warn">{pendingVisualsCount}</span>
+            <span className="metrics-label">Pending Visuals</span>
+          </div>
+          <div className="metrics-progress-col">
+            <div className="metrics-bar-label">
+              <span>Visual Readiness</span>
+              <span>{visualReadinessPct}%</span>
+            </div>
+            <div className="progress-bar-bg small">
+              <div
+                className="progress-bar-fill"
+                style={{ width: `${visualReadinessPct}%` }}
+              />
+            </div>
+          </div>
         </div>
       </section>
 
@@ -698,12 +844,26 @@ export default function App() {
           )}
         </div>
 
-        {/* Generation Progress Bar */}
+        {/* Enhanced Step-by-Step Loading Progress Bar */}
         {isGenerating && (
-          <div className="gen-progress-card">
-            <div className="progress-bar-bg">
+          <div className="gen-progress-card enhanced-progress">
+            <div className="gen-progress-header">
+              <span className="pulsing-ai-icon">⚡</span>
+              <div className="gen-progress-text">
+                <strong>Generating Slide Images with AI…</strong>
+                <p className="gen-progress-sub">{genStatus}</p>
+              </div>
+              <span className="gen-pct">
+                {genProgress.total > 0
+                  ? Math.round((genProgress.current / genProgress.total) * 100)
+                  : 0}
+                %
+              </span>
+            </div>
+
+            <div className="progress-bar-bg glowing">
               <div
-                className="progress-bar-fill"
+                className="progress-bar-fill animated-shimmer"
                 style={{
                   width: `${
                     genProgress.total > 0
@@ -713,14 +873,35 @@ export default function App() {
                 }}
               />
             </div>
-            <p className="status">{genStatus}</p>
+
+            {/* Slide Step Chips */}
+            <div className="gen-steps-track">
+              {slides.map((s, idx) => {
+                const isDone = Boolean(generatedImages[idx]);
+                const isCurrent = isGenerating && genProgress.current === idx + 1;
+                return (
+                  <span
+                    key={s.id || idx}
+                    className={`step-chip ${
+                      isDone ? 'done' : isCurrent ? 'current' : 'pending'
+                    }`}
+                    onClick={() => setPreviewModalIndex(idx)}
+                    title={`Slide #${s.id}: ${
+                      isDone ? 'Generated (Click to preview)' : isCurrent ? 'Generating…' : 'Pending'
+                    }`}
+                  >
+                    {isDone ? '✓' : isCurrent ? '⚡' : '○'} Slide {s.id}
+                  </span>
+                );
+              })}
+            </div>
           </div>
         )}
 
         {genStatus && !isGenerating && <p className="status-success">{genStatus}</p>}
       </section>
 
-      {/* 4. Alignment Section */}
+      {/* 4. Speech-to-Text & Timestamp Alignment */}
       <section>
         <h2>4. Speech-to-Text &amp; Alignment</h2>
         <div className="row">
@@ -753,7 +934,7 @@ export default function App() {
             <span className="badge badge-info">Clean Video Mode</span>
           </div>
           <p className="hint">
-            Slide images, animations, and voiceover are synchronized in real time. Use the video timeline below to scrub through your video.
+            Slide images, animations, and voiceover are synchronized in real time. Use the video timeline below to scrub through your video. Click any thumbnail for full-size image preview!
           </p>
 
           {/* Clean Canvas Rendering Frame */}
@@ -799,6 +980,7 @@ export default function App() {
             onSetSlideAnimation={setSlideAnimation}
             onSetSlidePrompt={setSlidePrompt}
             onGenerateSlideImage={handleGenerateSingleImage}
+            onPreviewImage={(idx) => setPreviewModalIndex(idx)}
             onSeek={handleSeek}
             isGenerating={isGenerating}
           />
@@ -852,13 +1034,13 @@ export default function App() {
         <section>
           <h2>6. Slide Timeline, Prompts &amp; Animation Styles</h2>
           <p className="hint">
-            Customize image prompts, generate/re-roll images, or choose specific animations per slide.
+            Customize image prompts, generate/re-roll images, or click on any thumbnail for full-size image preview.
           </p>
           <table>
             <thead>
               <tr>
                 <th>Slide</th>
-                <th>Image</th>
+                <th>Image Preview</th>
                 <th>AI Prompt</th>
                 <th>Animation Style</th>
                 <th>Start (s)</th>
@@ -886,12 +1068,16 @@ export default function App() {
                       <strong>#{row.id}</strong>
                     </td>
                     <td>
-                      <div className="table-img-cell">
+                      <div
+                        className="table-img-cell"
+                        onClick={() => setPreviewModalIndex(i)}
+                        title="Click for full-size image preview"
+                      >
                         {imgUrl ? (
                           <img
                             src={imgUrl}
                             alt={`Slide ${row.id}`}
-                            className="table-thumb"
+                            className="table-thumb clickable"
                           />
                         ) : (
                           <span className="muted-text">none</span>
@@ -954,6 +1140,14 @@ export default function App() {
                           title="Generate or re-roll image for this slide"
                         >
                           {isAi ? '🔄 Re-roll' : '🎨 Generate'}
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost small-btn"
+                          onClick={() => setPreviewModalIndex(i)}
+                          title="Preview full-size image"
+                        >
+                          👁️ View
                         </button>
                         <button
                           type="button"
@@ -1080,6 +1274,23 @@ export default function App() {
           </div>
         </section>
       )}
+
+      {/* Interactive Full-Size Image Preview Lightbox Modal */}
+      <ImagePreviewModal
+        isOpen={previewModalIndex !== null}
+        slideIndex={previewModalIndex ?? 0}
+        slides={slides}
+        rows={rows}
+        duration={duration}
+        effectiveImageUrls={effectiveImageUrls}
+        generatedImages={generatedImages}
+        slidePrompts={slidePrompts}
+        slideAnimations={slideAnimations}
+        onClose={() => setPreviewModalIndex(null)}
+        onSelectSlide={(idx) => setPreviewModalIndex(idx)}
+        onGenerateImage={handleGenerateSingleImage}
+        onDownloadImage={handleDownloadSingleImage}
+      />
     </main>
   );
 }

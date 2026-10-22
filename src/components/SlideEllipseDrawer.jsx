@@ -21,6 +21,7 @@ export default function SlideEllipseDrawer({
   onSetSlideAnimation = () => {},
   onSetSlidePrompt = () => {},
   onGenerateSlideImage = () => {},
+  onPreviewImage = () => {},
   onSeek = () => {},
   isGenerating = false,
 }) {
@@ -106,7 +107,14 @@ export default function SlideEllipseDrawer({
                   title={`Click to preview Slide #${row.id}`}
                 >
                   {/* Elliptical / Rounded Image Thumbnail Frame */}
-                  <div className="ellipse-thumb-container">
+                  <div
+                    className="ellipse-thumb-container"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPreviewImage(i);
+                    }}
+                    title="Click to view full-size image preview"
+                  >
                     {imgUrl ? (
                       <img
                         src={imgUrl}
