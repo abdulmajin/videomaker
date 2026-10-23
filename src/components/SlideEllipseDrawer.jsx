@@ -15,15 +15,18 @@ export default function SlideEllipseDrawer({
   currentTime = 0,
   effectiveImageUrls = [],
   generatedImages = {},
+  manualImages = {},
   animationMode = 'random',
   slideAnimations = {},
   slidePrompts = {},
   onSetSlideAnimation = () => {},
   onSetSlidePrompt = () => {},
   onGenerateSlideImage = () => {},
+  onReplaceSlideImage = () => {},
   onPreviewImage = () => {},
   onSeek = () => {},
   isGenerating = false,
+  drawerTitle = 'Slide Images & AI Prompt Shelf',
 }) {
   const [isOpen, setIsOpen] = useState(true);
   const [editingPromptIndex, setEditingPromptIndex] = useState(null);
@@ -43,11 +46,16 @@ export default function SlideEllipseDrawer({
       <div className="ellipse-drawer-header">
         <div className="ellipse-header-left">
           <span className="drawer-icon">🎞️</span>
-          <strong>Slide Images &amp; AI Prompt Shelf</strong>
+          <strong>{drawerTitle}</strong>
           <span className="badge badge-info">{rows.length} Slides</span>
           {Object.keys(generatedImages).length > 0 && (
             <span className="badge badge-success">
               ✨ {Object.keys(generatedImages).length} AI Generated
+            </span>
+          )}
+          {Object.keys(manualImages).length > 0 && (
+            <span className="badge badge-info">
+              📷 {Object.keys(manualImages).length} Custom Replaced
             </span>
           )}
         </div>
@@ -94,6 +102,7 @@ export default function SlideEllipseDrawer({
               const isActive = currentTime >= row.start && currentTime < nextStart;
               const imgUrl = effectiveImageUrls[i];
               const isAiGenerated = Boolean(generatedImages[i]);
+              const isManuallyReplaced = Boolean(manualImages[i]);
               const slide = slides[i] || {};
               const currentAnim = slideAnimations[i] || 'auto';
               const assignedAutoAnim = getSlideAnimation(animationMode, i);
@@ -129,7 +138,12 @@ export default function SlideEllipseDrawer({
                     )}
                     <span className="ellipse-badge-pill">#{row.id}</span>
 
-                    {isAiGenerated && (
+                    {isManuallyReplaced && (
+                      <span className="ellipse-ai-badge" style={{ background: '#0284c7' }} title="Custom replaced image">
+                        📷 Custom
+                      </span>
+                    )}
+                    {!isManuallyReplaced && isAiGenerated && (
                       <span className="ellipse-ai-badge" title="Generated with AI">
                         ✨ AI
                       </span>
@@ -143,27 +157,55 @@ export default function SlideEllipseDrawer({
 
                   {/* Inline Animation Style Dropdown Selector */}
                   <div className="ellipse-anim-select-box" onClick={(e) => e.stopPropagation()}>
-                    <label className="ellipse-select-label">Animation:</label>
+                    <label className="ellipse-select-label">Entry Animation:</label>
                     <select
                       className="ellipse-select-input"
                       value={currentAnim}
                       onChange={(e) => onSetSlideAnimation(i, e.target.value)}
                     >
                       <option value="auto">🎲 Auto ({assignedAutoAnim})</option>
-                      <option value="zoom-in">🔍 Zoom In</option>
-                      <option value="zoom-out">🔎 Zoom Out</option>
-                      <option value="pop">✨ Pop &amp; Bounce</option>
-                      <option value="breathe">🫁 Breathe</option>
-                      <option value="slide-left">⬅️ Slide Left</option>
-                      <option value="slide-right">➡️ Slide Right</option>
-                      <option value="slide-up">⬆️ Slide Up</option>
-                      <option value="fade">🌫️ Fade</option>
-                      <option value="pan-drift">🌊 Pan &amp; Drift</option>
+                      <option value="none">🚫 Static (No Animation)</option>
+                      <option value="zoom-in">🔍 Subtle Zoom In</option>
+                      <option value="zoom-out">🔎 Soft Zoom Settle</option>
+                      <option value="pop">✨ Pop &amp; Settle</option>
+                      <option value="breathe">🫁 Gentle Ease-In</option>
+                      <option value="slide-left">⬅️ Slide In Left</option>
+                      <option value="slide-right">➡️ Slide In Right</option>
+                      <option value="slide-up">⬆️ Slide In Up</option>
+                      <option value="fade">🌫️ Smooth Fade</option>
+                      <option value="pan-drift">🌊 Soft Pan Settle</option>
                     </select>
                   </div>
 
-                  {/* AI Prompt / Script Snippet */}
+                  {/* Manual Replace of Image & AI Prompt Snippet */}
                   <div className="ellipse-prompt-area" onClick={(e) => e.stopPropagation()}>
+                    <div className="ellipse-card-actions-row">
+                      {/* Manual Image Replace Button */}
+                      <label className="ellipse-replace-label" title="Manually upload and replace this slide image">
+                        📷 Replace Image
+                        <input
+                          type="file"
+                          accept="image/*"
+                          style={{ display: 'none' }}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) onReplaceSlideImage(i, file);
+                          }}
+                        />
+                      </label>
+
+                      {/* Generate / Re-roll AI Button */}
+                      <button
+                        type="button"
+                        className="ellipse-gen-btn"
+                        disabled={isGenerating}
+                        onClick={() => onGenerateSlideImage(i)}
+                        title="Generate AI image for this slide"
+                      >
+                        {isAiGenerated ? '🔄 Re-roll AI' : '🎨 Generate AI'}
+                      </button>
+                    </div>
+
                     {editingPromptIndex === i ? (
                       <textarea
                         rows={2}
@@ -186,17 +228,6 @@ export default function SlideEllipseDrawer({
                         </p>
                       </div>
                     )}
-
-                    {/* Generate / Re-roll Button */}
-                    <button
-                      type="button"
-                      className="ellipse-gen-btn"
-                      disabled={isGenerating}
-                      onClick={() => onGenerateSlideImage(i)}
-                      title="Generate or re-roll AI image for this slide"
-                    >
-                      {isAiGenerated ? '🔄 Re-roll AI Image' : '🎨 Generate Image'}
-                    </button>
                   </div>
                 </div>
               );

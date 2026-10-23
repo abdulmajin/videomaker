@@ -182,15 +182,7 @@ export function drawVideoFrame({
     ctx.restore();
   }
 
-  // 5. Header Watermark Title
-  if (title) {
-    ctx.save();
-    ctx.font = '600 20px system-ui, sans-serif';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
-    ctx.textAlign = 'left';
-    ctx.fillText(title, 36, 42);
-    ctx.restore();
-  }
+  // 5. Title Watermark: REMOVED per user rule (title should not appear on the video)
 
   // 6. Draw Selected Caption Style (No video progress timeline inside video)
   if (captionStyle !== 'none' && activeSlide && activeSlide.text) {

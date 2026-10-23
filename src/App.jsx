@@ -1,8 +1,5 @@
 import { useMemo, useRef, useState, useEffect, useCallback } from 'react';
-import { readDoc } from './lib/readDoc';
-import { parseScript, matchImages } from './lib/parseScript';
-import { decodeAudio } from './lib/audio';
-import { alignSlides } from './lib/align';
+import { decodeAudio, mergeAudioFiles } from './lib/audio';
 import {
   downloadText,
   downloadBlob,
@@ -16,13 +13,13 @@ import {
   drawVideoFrame,
   CAPTION_STYLES,
 } from './lib/renderVideo';
-import { ANIMATION_TYPES, getSlideAnimation } from './lib/animations';
+import { ANIMATION_TYPES } from './lib/animations';
 import {
   IMAGE_ENGINES,
   IMAGE_STYLES,
-  generateSlideImage,
-  enhancePrompt,
+  verifyGoogleApiKey,
 } from './lib/imageGen';
+import SectionEditor from './components/SectionEditor';
 import VisualTimeline from './components/VisualTimeline';
 import SlideEllipseDrawer from './components/SlideEllipseDrawer';
 import ImagePreviewModal from './components/ImagePreviewModal';
@@ -54,381 +51,305 @@ function transcribe(samples, model, onStatus) {
   });
 }
 
-const fmt = (s) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
+const fmt = (s) => {
+  if (isNaN(s) || s < 0) s = 0;
+  const mins = Math.floor(s / 60);
+  const secs = (s % 60).toFixed(1);
+  return `${String(mins).padStart(2, '0')}:${secs.padStart(4, '0')}`;
+};
+
+function createNewSection(index) {
+  return {
+    id: `sec-${Date.now()}-${index}`,
+    title: `Section ${index}`,
+    audio: null,
+    audioUrl: null,
+    duration: 0,
+    scriptText: '',
+    uploadedDocName: '',
+    inputMode: 'doc',
+    images: [],
+    slidePrompts: {},
+    generatedImages: {},
+    manualImages: {},
+    slideAnimations: {},
+    rows: [],
+    slides: [],
+    effectiveImageUrls: [],
+    isCollapsed: false,
+  };
+}
 
 export default function App() {
-  const [title, setTitle] = useState('');
-  const [images, setImages] = useState([]);
-  const [audio, setAudio] = useState(null);
-  const [scriptText, setScriptText] = useState('');
+  const [projectTitle, setProjectTitle] = useState('My Video Project');
   const [model, setModel] = useState(MODELS[0].id);
-  const [status, setStatus] = useState('');
-  const [error, setError] = useState('');
-  const [words, setWords] = useState([]);
-  const [duration, setDuration] = useState(0);
-  const [rows, setRows] = useState([]);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
 
-  // Input Selection Mode: 'doc' | 'textbox' | 'images' | 'aigen'
-  const [inputMode, setInputMode] = useState('doc');
-  const [uploadedDocName, setUploadedDocName] = useState('');
-
-  // AI Image Generation State
+  // Global AI Engine & API Key
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('google_ai_key') || '');
   const [showApiKey, setShowApiKey] = useState(false);
+  const [apiKeyStatus, setApiKeyStatus] = useState(null);
+  const [isVerifying, setIsVerifying] = useState(false);
   const [imageEngine, setImageEngine] = useState('google-imagen');
   const [visualStyle, setVisualStyle] = useState('cinematic');
-  const [slidePrompts, setSlidePrompts] = useState({});
-  const [generatedImages, setGeneratedImages] = useState({});
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [genStatus, setGenStatus] = useState('');
-  const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
-  const abortGenRef = useRef(false);
 
-  // Full-Screen Image Lightbox Preview Modal
-  const [previewModalIndex, setPreviewModalIndex] = useState(null);
-
-  // Animation & Caption Customization
+  // Animation & Subtitle Styling
   const [animationMode, setAnimationMode] = useState('random');
-  const [slideAnimations, setSlideAnimations] = useState({});
   const [captionStyle, setCaptionStyle] = useState('modern-card');
 
-  // Video Export & Options
+  // Multi-Section Video Architecture State
+  const [sections, setSections] = useState(() => [createNewSection(1)]);
+  const [mergedData, setMergedData] = useState(null);
+  const [isMerging, setIsMerging] = useState(false);
+  const [mergeError, setMergeError] = useState('');
+  const [mergedPlaying, setMergedPlaying] = useState(false);
+  const [mergedCurrentTime, setMergedCurrentTime] = useState(0);
+
+  // Video Export
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportStatus, setExportStatus] = useState('');
-  const [videoBlobUrl, setVideoBlobUrl] = useState(null);
-  const [videoFilename, setVideoFilename] = useState('');
   const [resolution, setResolution] = useState('720p');
 
-  const audioRef = useRef(null);
-  const previewCanvasRef = useRef(null);
-  const preloadedImagesRef = useRef([]);
+  // Lightbox Modal
+  const [previewModalData, setPreviewModalData] = useState(null); // { url, title }
+
+  const mergedAudioRef = useRef(null);
+  const mergedCanvasRef = useRef(null);
+  const mergedAnimFrameRef = useRef(null);
+  const preloadedMergedImagesRef = useRef([]);
   const abortControllerRef = useRef(null);
-  const animFrameIdRef = useRef(null);
-
-  const slides = useMemo(() => parseScript(scriptText), [scriptText]);
-  const audioUrl = useMemo(() => (audio ? URL.createObjectURL(audio) : null), [audio]);
-  const matched = useMemo(() => matchImages(slides, images), [slides, images]);
-  const imageUrls = useMemo(
-    () => matched.map((f) => (f ? URL.createObjectURL(f) : null)),
-    [matched]
-  );
-
-  // Prioritize AI Generated image, then uploaded matched image
-  const effectiveImageUrls = useMemo(() => {
-    return slides.map((s, i) => {
-      if (generatedImages[i]?.url) return generatedImages[i].url;
-      if (imageUrls[i]) return imageUrls[i];
-      return null;
-    });
-  }, [slides, generatedImages, imageUrls]);
-
-  // Clean up object URLs
-  useEffect(() => {
-    return () => {
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
-    };
-  }, [audioUrl]);
-
-  // Preload images whenever effectiveImageUrls change
-  useEffect(() => {
-    let active = true;
-    preloadImages(effectiveImageUrls).then((imgs) => {
-      if (active) preloadedImagesRef.current = imgs;
-    });
-    return () => {
-      active = false;
-    };
-  }, [effectiveImageUrls]);
 
   // Save API key
   const handleApiKeyChange = (val) => {
     setApiKey(val);
     localStorage.setItem('google_ai_key', val.trim());
+    setApiKeyStatus(null);
   };
 
-  // Render a preview frame onto the canvas
-  const renderCurrentPreview = useCallback(
+  const handleVerifyApiKey = async () => {
+    if (!apiKey.trim()) {
+      setApiKeyStatus({ valid: false, message: 'Please enter an API key first.' });
+      return;
+    }
+    setIsVerifying(true);
+    setApiKeyStatus(null);
+    try {
+      const result = await verifyGoogleApiKey(apiKey);
+      setApiKeyStatus(result);
+    } catch (e) {
+      setApiKeyStatus({ valid: false, message: `Verification error: ${e.message}` });
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  // Sections Provision: Adjust number of sections
+  const setSectionCount = (targetCount) => {
+    const count = Math.max(1, targetCount);
+    setSections((prev) => {
+      if (prev.length === count) return prev;
+      if (prev.length < count) {
+        const next = [...prev];
+        for (let i = prev.length + 1; i <= count; i++) {
+          next.push(createNewSection(i));
+        }
+        return next;
+      } else {
+        return prev.slice(0, count);
+      }
+    });
+  };
+
+  const handleAddSection = () => {
+    setSections((prev) => [...prev, createNewSection(prev.length + 1)]);
+  };
+
+  const handleRemoveSection = (idx) => {
+    if (sections.length <= 1) return;
+    setSections((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleUpdateSection = (idx, updater) => {
+    setSections((prev) => {
+      const next = [...prev];
+      const current = next[idx];
+      next[idx] = typeof updater === 'function' ? updater(current) : { ...current, ...updater };
+      return next;
+    });
+  };
+
+  // Preload merged images when mergedData changes
+  useEffect(() => {
+    if (!mergedData?.effectiveImageUrls) return;
+    let active = true;
+    preloadImages(mergedData.effectiveImageUrls).then((imgs) => {
+      if (active) preloadedMergedImagesRef.current = imgs;
+    });
+    return () => {
+      active = false;
+    };
+  }, [mergedData?.effectiveImageUrls]);
+
+  // Master Merged Canvas Frame Renderer
+  const renderMergedPreview = useCallback(
     (t) => {
-      const canvas = previewCanvasRef.current;
-      if (!canvas || !rows.length) return;
+      const canvas = mergedCanvasRef.current;
+      if (!canvas || !mergedData?.rows?.length) return;
       const ctx = canvas.getContext('2d');
       drawVideoFrame({
         ctx,
         width: canvas.width,
         height: canvas.height,
         time: t,
-        duration,
-        rows,
-        slides,
-        preloadedImages: preloadedImagesRef.current,
+        duration: mergedData.duration || 1,
+        rows: mergedData.rows,
+        slides: mergedData.slides,
+        preloadedImages: preloadedMergedImagesRef.current,
         animationMode,
-        slideAnimations,
+        slideAnimations: mergedData.slideAnimations || {},
         captionStyle,
-        title,
+        title: '', // Rule: Title should NOT appear on video
       });
     },
-    [rows, slides, duration, animationMode, slideAnimations, captionStyle, title]
+    [mergedData, animationMode, captionStyle]
   );
 
-  // Live animation loop during playback
+  // Playback loop for master merged video
   useEffect(() => {
-    if (!isPlaying) {
-      if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
-      renderCurrentPreview(currentTime);
+    if (!mergedPlaying) {
+      if (mergedAnimFrameRef.current) cancelAnimationFrame(mergedAnimFrameRef.current);
+      renderMergedPreview(mergedCurrentTime);
       return;
     }
 
     function loop() {
-      if (audioRef.current) {
-        const t = audioRef.current.currentTime;
-        setCurrentTime(t);
-        renderCurrentPreview(t);
+      if (mergedAudioRef.current) {
+        const t = mergedAudioRef.current.currentTime;
+        setMergedCurrentTime(t);
+        renderMergedPreview(t);
       }
-      animFrameIdRef.current = requestAnimationFrame(loop);
+      mergedAnimFrameRef.current = requestAnimationFrame(loop);
     }
 
-    animFrameIdRef.current = requestAnimationFrame(loop);
+    mergedAnimFrameRef.current = requestAnimationFrame(loop);
     return () => {
-      if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
+      if (mergedAnimFrameRef.current) cancelAnimationFrame(mergedAnimFrameRef.current);
     };
-  }, [isPlaying, renderCurrentPreview, currentTime]);
+  }, [mergedPlaying, renderMergedPreview, mergedCurrentTime]);
 
-  // Seek handler for visual timeline
-  const handleSeek = (targetTime) => {
-    const clamped = Math.max(0, Math.min(duration, targetTime));
-    setCurrentTime(clamped);
-    if (audioRef.current) {
-      audioRef.current.currentTime = clamped;
-    }
-    renderCurrentPreview(clamped);
+  const handleMergedSeek = (t) => {
+    const clamped = Math.max(0, Math.min(mergedData?.duration || 1, t));
+    setMergedCurrentTime(clamped);
+    if (mergedAudioRef.current) mergedAudioRef.current.currentTime = clamped;
+    renderMergedPreview(clamped);
   };
 
-  const setSlideAnimation = (idx, animId) => {
-    setSlideAnimations((prev) => ({ ...prev, [idx]: animId }));
-    setTimeout(() => renderCurrentPreview(currentTime), 20);
-  };
-
-  const setSlidePrompt = (idx, val) => {
-    setSlidePrompts((prev) => ({ ...prev, [idx]: val }));
-  };
-
-  // AI Image Generation: Single Slide
-  async function handleGenerateSingleImage(index) {
-    const slide = slides[index];
-    if (!slide) return;
-    const prompt = slidePrompts[index] || slide.text;
-    if (!prompt) return;
-
-    if (imageEngine === 'google-imagen' && !apiKey.trim()) {
-      setError('Please enter your Google AI Studio API key in Section 3, or select Instant Free AI.');
+  // Merge All Sections into Final Video
+  const handleMergeAllSections = async () => {
+    const readySections = sections.filter((s) => s.audio && s.rows?.length > 0);
+    if (readySections.length === 0) {
+      setMergeError(
+        'Please ensure at least one section has voice audio and aligned slides before merging.'
+      );
       return;
     }
 
-    setError('');
-    setIsGenerating(true);
-    setGenStatus(`Generating AI image for Slide #${slide.id}…`);
+    setMergeError('');
+    setIsMerging(true);
 
     try {
-      const res = await generateSlideImage({
-        prompt,
-        apiKey,
-        engine: imageEngine,
-        style: visualStyle,
-      });
+      // 1. Merge audio files sequentially into one seamless WAV Blob
+      const audioFiles = readySections.map((s) => s.audio);
+      const mergedAudioResult = await mergeAudioFiles(audioFiles);
+      if (!mergedAudioResult) {
+        throw new Error('Failed to merge audio files.');
+      }
 
-      const url = URL.createObjectURL(res.blob);
-      setGeneratedImages((prev) => ({
-        ...prev,
-        [index]: { blob: res.blob, url, prompt, engine: res.engine },
-      }));
-      setGenStatus(`✨ Slide #${slide.id} image ready and attached!`);
-      setTimeout(() => renderCurrentPreview(currentTime), 60);
-    } catch (err) {
-      setError(`Image generation error: ${err.message}`);
-      setGenStatus('');
-    } finally {
-      setIsGenerating(false);
-    }
-  }
+      const mergedAudioUrl = URL.createObjectURL(mergedAudioResult.blob);
 
-  // AI Image Generation: Batch All Slides
-  async function handleGenerateAllImages() {
-    if (!slides.length) {
-      setError('Please add your script or prompts first.');
-      return;
-    }
+      // 2. Stitch rows, slides, and images with cumulative time offsets
+      const mergedRows = [];
+      const mergedSlides = [];
+      const mergedImageUrls = [];
+      const mergedSlideAnimations = {};
+      let globalSlideId = 1;
+      let timeOffset = 0;
 
-    if (imageEngine === 'google-imagen' && !apiKey.trim()) {
-      setError('Please enter your Google AI Studio API key in Section 3, or select Instant Free AI.');
-      return;
-    }
+      readySections.forEach((sec, secIdx) => {
+        const secRows = sec.rows || [];
+        const secSlides = sec.slides || [];
+        const secImages = sec.effectiveImageUrls || [];
 
-    setError('');
-    setIsGenerating(true);
-    abortGenRef.current = false;
-    setGenProgress({ current: 0, total: slides.length });
+        secRows.forEach((row, rowIdx) => {
+          const slide = secSlides[rowIdx] || {};
+          const imgUrl = secImages[rowIdx] || null;
+          const anim = sec.slideAnimations?.[rowIdx] || 'auto';
 
-    try {
-      for (let i = 0; i < slides.length; i++) {
-        if (abortGenRef.current) {
-          setGenStatus('Generation stopped.');
-          break;
-        }
+          mergedRows.push({
+            id: globalSlideId,
+            start: row.start + timeOffset,
+            text: row.text || slide.text || '',
+            sectionIndex: secIdx,
+            sectionTitle: sec.title || `Section ${secIdx + 1}`,
+          });
 
-        const slide = slides[i];
-        const prompt = slidePrompts[i] || slide.text;
-        setGenProgress({ current: i + 1, total: slides.length });
-        setGenStatus(
-          `Generating image ${i + 1} of ${slides.length} (Slide #${slide.id}) using ${
-            imageEngine === 'google-imagen' ? 'Google Imagen 3' : 'Free AI'
-          }…`
-        );
+          mergedSlides.push({
+            id: globalSlideId,
+            text: slide.text || row.text || '',
+            raw: slide.raw || '',
+            sectionIndex: secIdx,
+          });
 
-        const res = await generateSlideImage({
-          prompt,
-          apiKey,
-          engine: imageEngine,
-          style: visualStyle,
+          mergedImageUrls.push(imgUrl);
+          mergedSlideAnimations[globalSlideId - 1] = anim;
+          globalSlideId++;
         });
 
-        const url = URL.createObjectURL(res.blob);
-        setGeneratedImages((prev) => ({
-          ...prev,
-          [i]: { blob: res.blob, url, prompt, engine: res.engine },
-        }));
+        timeOffset += sec.duration;
+      });
 
-        setTimeout(() => renderCurrentPreview(currentTime), 30);
+      setMergedData({
+        audioFile: mergedAudioResult.blob,
+        audioUrl: mergedAudioUrl,
+        duration: mergedAudioResult.duration,
+        rows: mergedRows,
+        slides: mergedSlides,
+        effectiveImageUrls: mergedImageUrls,
+        slideAnimations: mergedSlideAnimations,
+      });
 
-        // Pause briefly between requests to ensure clean rate-limit handling
-        if (i < slides.length - 1) {
-          await new Promise((r) => setTimeout(r, 600));
-        }
-      }
-
-      if (!abortGenRef.current) {
-        setGenStatus(`🎉 Generated all ${slides.length} slide images! Synced to speech timestamps.`);
-      }
+      setTimeout(() => renderMergedPreview(0), 100);
     } catch (err) {
-      setError(`Generation stopped: ${err.message}`);
+      setMergeError(`Merge failed: ${err.message}`);
     } finally {
-      setIsGenerating(false);
-    }
-  }
-
-  // Auto-fill / enhance prompts for all slides
-  const handleAutoFillPrompts = () => {
-    const updated = {};
-    slides.forEach((s, i) => {
-      updated[i] = enhancePrompt(s.text, visualStyle);
-    });
-    setSlidePrompts(updated);
-    setGenStatus('✨ Updated prompts for all slides with chosen visual style.');
-  };
-
-  // Download all generated images to local machine
-  const handleDownloadAllImages = () => {
-    const indices = Object.keys(generatedImages);
-    if (!indices.length) return;
-    indices.forEach((key, delayIndex) => {
-      const item = generatedImages[key];
-      if (item?.blob) {
-        setTimeout(() => {
-          downloadBlob(item.blob, `slide_${Number(key) + 1}.jpg`);
-        }, delayIndex * 300);
-      }
-    });
-  };
-
-  // Download single image
-  const handleDownloadSingleImage = (index) => {
-    const item = generatedImages[index];
-    if (item?.blob) {
-      downloadBlob(item.blob, `slide_${index + 1}.jpg`);
-    } else if (imageUrls[index]) {
-      const a = document.createElement('a');
-      a.href = imageUrls[index];
-      a.download = `slide_${index + 1}.jpg`;
-      a.click();
+      setIsMerging(false);
     }
   };
 
-  async function onScriptFile(file) {
-    if (!file) return;
-    setError('');
-    setUploadedDocName(file.name);
-    try {
-      const text = await readDoc(file);
-      setScriptText(text);
-    } catch (e) {
-      setError(`Could not read the script: ${e.message}`);
-    }
-  }
+  // Video Export for Merged Video
+  const handleExportMergedVideo = async () => {
+    if (!mergedData?.audioFile || !mergedData?.rows?.length) return;
 
-  async function run() {
-    setError('');
-    setRows([]);
-    setVideoBlobUrl(null);
-    try {
-      setStatus('Decoding audio…');
-      const { samples, duration } = await decodeAudio(audio);
-      setDuration(duration);
-      const w = await transcribe(samples, model, setStatus);
-      setWords(w);
-      const aligned = alignSlides(slides, w, duration);
-      setRows(aligned);
-      setStatus('');
-      setTimeout(() => renderCurrentPreview(0), 100);
-    } catch (e) {
-      setStatus('');
-      setError(e.message);
-    }
-  }
-
-  const realign = () => {
-    const aligned = alignSlides(slides, words, duration);
-    setRows(aligned);
-    renderCurrentPreview(currentTime);
-  };
-
-  const setStart = (idx, v) => {
-    setRows((r) => r.map((row, i) => (i === idx ? { ...row, start: Number(v) } : row)));
-    renderCurrentPreview(currentTime);
-  };
-
-  const playFrom = (t) => {
-    if (!audioRef.current) return;
-    audioRef.current.currentTime = t;
-    setCurrentTime(t);
-    audioRef.current.play();
-  };
-
-  // Video Export Handler
-  async function handleExportVideo() {
-    if (!audio || !rows.length) return;
     setIsExporting(true);
     setExportProgress(0);
     setExportStatus('Starting video render…');
-    setVideoBlobUrl(null);
     abortControllerRef.current = new AbortController();
 
     const [w, h] = resolution === '1080p' ? [1920, 1080] : [1280, 720];
 
     try {
       const { blob, filename } = await renderVideo({
-        audioFile: audio,
-        rows,
-        slides,
-        imageUrls: effectiveImageUrls,
-        duration,
-        title,
+        audioFile: mergedData.audioFile,
+        rows: mergedData.rows,
+        slides: mergedData.slides,
+        imageUrls: mergedData.effectiveImageUrls,
+        duration: mergedData.duration,
+        title: projectTitle,
         width: w,
         height: h,
         fps: 30,
         animationMode,
-        slideAnimations,
+        slideAnimations: mergedData.slideAnimations,
         captionStyle,
         onProgress: (pct, msg) => {
           setExportProgress(pct);
@@ -437,304 +358,108 @@ export default function App() {
         abortSignal: abortControllerRef.current.signal,
       });
 
-      const url = URL.createObjectURL(blob);
-      setVideoBlobUrl(url);
-      setVideoFilename(filename);
       downloadBlob(blob, filename);
       setExportStatus(`Export complete! Saved as ${filename}`);
     } catch (err) {
       if (err.message !== 'Render cancelled') {
-        setError(`Video export error: ${err.message}`);
+        setExportStatus(`Export error: ${err.message}`);
       }
-      setExportStatus('');
     } finally {
       setIsExporting(false);
     }
-  }
+  };
 
-  function handleCancelExport() {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-  }
-
-  // Subtitle & Timeline Exporters
-  function handleExportSrt() {
-    const text = generateSrt(rows, slides, duration);
-    const safeTitle = (title || 'video').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
+  // Subtitle Exporters for Merged Video
+  const handleExportSrt = () => {
+    if (!mergedData) return;
+    const text = generateSrt(mergedData.rows, mergedData.slides, mergedData.duration);
+    const safeTitle = (projectTitle || 'video').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
     downloadText(text, `${safeTitle}.srt`, 'text/plain;charset=utf-8');
-  }
+  };
 
-  function handleExportVtt() {
-    const text = generateVtt(rows, slides, duration);
-    const safeTitle = (title || 'video').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
+  const handleExportVtt = () => {
+    if (!mergedData) return;
+    const text = generateVtt(mergedData.rows, mergedData.slides, mergedData.duration);
+    const safeTitle = (projectTitle || 'video').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
     downloadText(text, `${safeTitle}.vtt`, 'text/vtt;charset=utf-8');
-  }
+  };
 
-  function handleExportJson() {
-    const json = generateTimelineJson(title, rows, slides, duration, matched, slideAnimations);
-    const safeTitle = (title || 'video').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
+  const handleExportJson = () => {
+    if (!mergedData) return;
+    const json = generateTimelineJson(
+      projectTitle,
+      mergedData.rows,
+      mergedData.slides,
+      mergedData.duration,
+      [],
+      mergedData.slideAnimations
+    );
+    const safeTitle = (projectTitle || 'video').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
     downloadText(json, `${safeTitle}_timeline.json`, 'application/json;charset=utf-8');
-  }
+  };
 
-  const ready = audio && slides.length > 0 && !status;
-
-  // Active slide index in timeline playback
-  let activeSlideIndex = 0;
-  for (let i = 0; i < rows.length; i++) {
-    if (currentTime >= rows[i].start) {
-      activeSlideIndex = i;
-    } else {
-      break;
-    }
-  }
-
-  const pendingVisualsCount = Math.max(
-    0,
-    slides.length - effectiveImageUrls.filter(Boolean).length
-  );
-  const visualReadinessPct =
-    slides.length > 0
-      ? Math.min(100, Math.round((effectiveImageUrls.filter(Boolean).length / slides.length) * 100))
-      : 0;
+  // Download All Images across all sections
+  const handleDownloadAllImages = () => {
+    if (!mergedData?.effectiveImageUrls) return;
+    mergedData.effectiveImageUrls.forEach((url, idx) => {
+      if (!url) return;
+      setTimeout(() => {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `slide_${idx + 1}.jpg`;
+        a.click();
+      }, idx * 250);
+    });
+  };
 
   return (
     <main>
       <header>
-        <div className="header-badge">Video Maker Studio v1.0</div>
-        <h1>AI Slide Video Maker</h1>
+        <div className="header-badge">Video Maker Studio v2.0 • Multi-Section Architecture</div>
+        <h1>Multi-Section Video Maker</h1>
         <p>
-          Select your input method, upload files or type line-by-line prompts, generate visuals with
-          Google Flow / Imagen 3, preview in high-res, and export your finished video.
+          Organize your video into sections with independent voiceover, script, images, manual replacement, and video previews.
+          Then merge all sections into one seamless master video!
         </p>
       </header>
 
-      {/* 1. Global Project Title & Voice Recording Section */}
-      <section>
-        <h2>1. Project Audio &amp; Title</h2>
+      {/* Global Project Configuration */}
+      <section className="global-config-section">
+        <div className="section-header-row">
+          <div>
+            <h2>Global Settings &amp; AI Studio</h2>
+            <p className="hint">Configure project metadata, AI image generation, animation, and caption styles.</p>
+          </div>
+        </div>
+
         <div className="grid-2">
           <label>
-            Video title
+            Project Title:
             <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. My Educational Video"
+              value={projectTitle}
+              onChange={(e) => setProjectTitle(e.target.value)}
+              placeholder="e.g. History of Space Exploration"
             />
           </label>
+
           <label>
-            Voice recording (audio file)
-            <input
-              type="file"
-              accept="audio/*"
-              onChange={(e) => setAudio(e.target.files[0] || null)}
-            />
+            Whisper Speech-to-Text Model:
+            <select value={model} onChange={(e) => setModel(e.target.value)}>
+              {MODELS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
 
-        {audioUrl && (
-          <div className="audio-player-box">
-            <label className="audio-label">Voiceover Audio Player</label>
-            <audio
-              ref={audioRef}
-              src={audioUrl}
-              controls
-              onPlay={() => setIsPlaying(true)}
-              onPause={() => setIsPlaying(false)}
-              onEnded={() => setIsPlaying(false)}
-              onTimeUpdate={(e) => {
-                const t = e.currentTarget.currentTime;
-                setCurrentTime(t);
-                if (!isPlaying) renderCurrentPreview(t);
-              }}
-            />
-          </div>
-        )}
-      </section>
-
-      {/* 2. Input Method Selector Tabs (Doc Upload, Text Box, Images, AI Prompts) */}
-      <section className="input-method-section">
-        <div className="section-header-row">
-          <div>
-            <h2>2. Script &amp; Image Input Selection</h2>
-            <p className="hint">Choose how you want to provide your script, prompts, or visuals:</p>
-          </div>
-        </div>
-
-        {/* Mode Selector Tabs */}
-        <div className="input-mode-tabs">
-          <button
-            type="button"
-            className={`input-mode-tab ${inputMode === 'doc' ? 'active' : ''}`}
-            onClick={() => setInputMode('doc')}
-          >
-            📁 Document File (.pdf, .docx, .txt, .csv)
-          </button>
-          <button
-            type="button"
-            className={`input-mode-tab ${inputMode === 'textbox' ? 'active' : ''}`}
-            onClick={() => setInputMode('textbox')}
-          >
-            ✍️ Direct Text Box (Type / Paste)
-          </button>
-          <button
-            type="button"
-            className={`input-mode-tab ${inputMode === 'images' ? 'active' : ''}`}
-            onClick={() => setInputMode('images')}
-          >
-            🖼️ Upload Images ({images.length})
-          </button>
-          <button
-            type="button"
-            className={`input-mode-tab ${inputMode === 'aigen' ? 'active' : ''}`}
-            onClick={() => setInputMode('aigen')}
-          >
-            ✨ AI Prompt Studio (Google Flow)
-          </button>
-        </div>
-
-        {/* Tab 1: Document Upload (.pdf, .docx, .txt, .csv) */}
-        {inputMode === 'doc' && (
-          <div className="tab-pane">
-            <div className="file-drop-card">
-              <label className="file-upload-label">
-                <span className="file-upload-icon">📄</span>
-                <strong>Choose a Script File (.pdf, .docx, .txt, or .csv)</strong>
-                <span className="file-upload-hint">
-                  Supports PDF documents, Word .docx, plain text, and structured CSV spreadsheets.
-                </span>
-                <input
-                  type="file"
-                  accept=".docx,.pdf,.txt,.csv"
-                  onChange={(e) => onScriptFile(e.target.files[0])}
-                  className="hidden-file-input"
-                />
-                <span className="browse-files-btn">Browse Files</span>
-              </label>
-              {uploadedDocName && (
-                <div className="uploaded-file-tag">
-                  <span>✓ Loaded: <strong>{uploadedDocName}</strong></span>
-                  <small>({slides.length} slides detected)</small>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Tab 2: Direct Text Box */}
-        {inputMode === 'textbox' && (
-          <div className="tab-pane">
-            <p className="hint">
-              Type or paste your text line by line or as &quot;Slide 1: [content]&quot;. Slides update automatically.
-            </p>
-            <textarea
-              rows={7}
-              value={scriptText}
-              onChange={(e) => setScriptText(e.target.value)}
-              placeholder={
-                'Slide 1: Welcome to our lesson today.\nSlide 2: In this part, we explore the solar system.\nSlide 3: Here is a futuristic spacecraft approaching Mars.'
-              }
-            />
-          </div>
-        )}
-
-        {/* Tab 3: Local Images Upload */}
-        {inputMode === 'images' && (
-          <div className="tab-pane">
-            <label>
-              Select Image Files from your computer:
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={(e) => setImages([...e.target.files])}
-              />
-              <small>
-                {images.length} images selected. Name them slide1.jpg, slide2.jpg to auto-order, or they match in sequence.
-              </small>
-            </label>
-
-            {images.length > 0 && (
-              <div className="uploaded-thumbs-gallery">
-                {imageUrls.map((url, idx) => (
-                  <div
-                    key={idx}
-                    className="uploaded-thumb-chip"
-                    onClick={() => setPreviewModalIndex(idx)}
-                    title="Click to view preview"
-                  >
-                    {url && <img src={url} alt={`Uploaded ${idx + 1}`} />}
-                    <span>#{idx + 1}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Tab 4: AI Prompt Studio Quick View */}
-        {inputMode === 'aigen' && (
-          <div className="tab-pane">
-            <p className="hint">
-              Generate 16:9 widescreen images directly from prompts line-by-line using Google Imagen 3 (Google Flow Engine). See Section 3 below to run generation!
-            </p>
-          </div>
-        )}
-
-        {/* Image Prompt Count Metrics Card */}
-        <div className="prompt-metrics-card">
-          <div className="metrics-col">
-            <span className="metrics-num">{slides.length}</span>
-            <span className="metrics-label">Image Prompts / Slides</span>
-          </div>
-          <div className="metrics-col">
-            <span className="metrics-num text-success">
-              {Object.keys(generatedImages).length}
-            </span>
-            <span className="metrics-label">AI Generated</span>
-          </div>
-          <div className="metrics-col">
-            <span className="metrics-num text-info">{images.length}</span>
-            <span className="metrics-label">Uploaded Files</span>
-          </div>
-          <div className="metrics-col">
-            <span className="metrics-num text-warn">{pendingVisualsCount}</span>
-            <span className="metrics-label">Pending Visuals</span>
-          </div>
-          <div className="metrics-progress-col">
-            <div className="metrics-bar-label">
-              <span>Visual Readiness</span>
-              <span>{visualReadinessPct}%</span>
-            </div>
-            <div className="progress-bar-bg small">
-              <div
-                className="progress-bar-fill"
-                style={{ width: `${visualReadinessPct}%` }}
-              />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* 3. AI Image Generation Studio (Google Flow / Imagen 3) */}
-      <section className="image-gen-section">
-        <div className="section-header-row">
-          <div>
-            <h2>3. AI Image Generation Studio (Google Flow / Imagen 3)</h2>
-            <p className="hint">
-              Generate 16:9 widescreen images directly from your script prompts line-by-line without uploading files.
-            </p>
-          </div>
-          <span className="badge badge-info">Google Imagen 3 Ready</span>
-        </div>
-
-        <div className="image-gen-grid">
-          {/* Engine Selector */}
+        <div className="image-gen-grid" style={{ marginTop: '14px' }}>
           <label>
             Image Generation Engine:
             <select
               value={imageEngine}
               onChange={(e) => setImageEngine(e.target.value)}
-              disabled={isGenerating}
             >
               {IMAGE_ENGINES.map((eng) => (
                 <option key={eng.id} value={eng.id}>
@@ -744,13 +469,11 @@ export default function App() {
             </select>
           </label>
 
-          {/* Visual Style Preset */}
           <label>
-            Visual Art Style:
+            Visual Style Preset:
             <select
               value={visualStyle}
               onChange={(e) => setVisualStyle(e.target.value)}
-              disabled={isGenerating}
             >
               {IMAGE_STYLES.map((st) => (
                 <option key={st.id} value={st.id}>
@@ -761,7 +484,7 @@ export default function App() {
           </label>
         </div>
 
-        {/* API Key Input for Google Imagen 3 */}
+        {/* Google AI Studio API Key with Verify Button */}
         {imageEngine === 'google-imagen' && (
           <div className="api-key-box">
             <label>
@@ -781,9 +504,23 @@ export default function App() {
                 >
                   {showApiKey ? 'Hide' : 'Show'}
                 </button>
+                <button
+                  type="button"
+                  className="ghost small-btn"
+                  disabled={isVerifying || !apiKey.trim()}
+                  onClick={handleVerifyApiKey}
+                  title="Test your API key to make sure it works"
+                >
+                  {isVerifying ? '⏳ Verifying…' : '🔑 Verify'}
+                </button>
               </div>
+              {apiKeyStatus && (
+                <div className={`api-key-status ${apiKeyStatus.valid ? 'valid' : 'invalid'}`}>
+                  {apiKeyStatus.message}
+                </div>
+              )}
               <small>
-                Get your free API key at{' '}
+                Get your key at{' '}
                 <a
                   href="https://aistudio.google.com/app/apikey"
                   target="_blank"
@@ -792,505 +529,305 @@ export default function App() {
                 >
                   aistudio.google.com
                 </a>{' '}
-                (stored securely in your browser's localStorage).
+                (saved in browser localStorage).
               </small>
             </label>
           </div>
         )}
 
-        {/* Action Buttons Bar */}
-        <div className="gen-actions-bar">
+        {/* Global Animation & Subtitle Presets */}
+        <div className="animation-options-grid" style={{ marginTop: '14px' }}>
+          <label>
+            Slide Entry Animation Mode:
+            <select
+              value={animationMode}
+              onChange={(e) => setAnimationMode(e.target.value)}
+            >
+              {ANIMATION_TYPES.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.label}
+                </option>
+              ))}
+            </select>
+            <small className="hint">
+              Rules active: Animate enter only (no exit transitions). Timestamps ≤ 2.5s skip animation.
+            </small>
+          </label>
+
+          <label>
+            Caption / Subtitle Style:
+            <select
+              value={captionStyle}
+              onChange={(e) => setCaptionStyle(e.target.value)}
+            >
+              {CAPTION_STYLES.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </section>
+
+      {/* Sections Control Panel: Provision to choose how many sections needed */}
+      <section className="sections-control-panel">
+        <div className="sections-control-header">
+          <div>
+            <h2>Video Sections ({sections.length})</h2>
+            <p className="hint">
+              Select how many sections you need or add sections dynamically. Each section has its own script, voice, images, and video preview.
+            </p>
+          </div>
+
           <button
             type="button"
-            className="primary-btn"
-            disabled={isGenerating || slides.length === 0}
-            onClick={handleGenerateAllImages}
+            className="add-section-btn"
+            onClick={handleAddSection}
+            title="Add a new section"
           >
-            {isGenerating ? '⏳ Generating in progress…' : '🚀 Generate Images for ALL Slides'}
+            + Add New Section
           </button>
-
-          <button
-            type="button"
-            className="ghost"
-            disabled={isGenerating || slides.length === 0}
-            onClick={handleAutoFillPrompts}
-            title="Automatically format prompts from script with chosen style"
-          >
-            ✨ Enhance Prompts from Script
-          </button>
-
-          {Object.keys(generatedImages).length > 0 && (
-            <button
-              type="button"
-              className="ghost"
-              onClick={handleDownloadAllImages}
-              title="Download all generated image files"
-            >
-              💾 Download All Generated Images ({Object.keys(generatedImages).length})
-            </button>
-          )}
-
-          {isGenerating && (
-            <button
-              type="button"
-              className="danger-btn"
-              onClick={() => {
-                abortGenRef.current = true;
-                setIsGenerating(false);
-              }}
-            >
-              Stop Generation
-            </button>
-          )}
         </div>
 
-        {/* Enhanced Step-by-Step Loading Progress Bar */}
-        {isGenerating && (
-          <div className="gen-progress-card enhanced-progress">
-            <div className="gen-progress-header">
-              <span className="pulsing-ai-icon">⚡</span>
-              <div className="gen-progress-text">
-                <strong>Generating Slide Images with AI…</strong>
-                <p className="gen-progress-sub">{genStatus}</p>
-              </div>
-              <span className="gen-pct">
-                {genProgress.total > 0
-                  ? Math.round((genProgress.current / genProgress.total) * 100)
-                  : 0}
-                %
+        {/* Quick Section Count Selector Pills */}
+        <div className="section-selector-pills">
+          <span style={{ fontSize: '0.82rem', color: '#94a3b8', marginRight: '4px' }}>
+            Quick Count:
+          </span>
+          {[1, 2, 3, 4, 5, 6].map((num) => (
+            <button
+              key={num}
+              type="button"
+              className={`section-count-pill ${sections.length === num ? 'active' : ''}`}
+              onClick={() => setSectionCount(num)}
+            >
+              {num} {num === 1 ? 'Section' : 'Sections'}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* Section Editors List */}
+      <div className="sections-container">
+        {sections.map((section, idx) => (
+          <SectionEditor
+            key={section.id}
+            section={section}
+            sectionIndex={idx}
+            totalSections={sections.length}
+            apiKey={apiKey}
+            imageEngine={imageEngine}
+            visualStyle={visualStyle}
+            animationMode={animationMode}
+            captionStyle={captionStyle}
+            whisperModel={model}
+            transcribeFn={transcribe}
+            onUpdateSection={(updater) => handleUpdateSection(idx, updater)}
+            onRemoveSection={() => handleRemoveSection(idx)}
+            onPreviewImage={(url, title) => setPreviewModalData({ url, title })}
+          />
+        ))}
+      </div>
+
+      {/* Big Action Bar: Merge All Sections into Final Video */}
+      <div className="merge-action-card">
+        <button
+          type="button"
+          className="big-merge-btn"
+          disabled={isMerging}
+          onClick={handleMergeAllSections}
+        >
+          {isMerging ? '⏳ Merging Audio & Slides…' : '🎬 Merge All Sections into Final Video'}
+        </button>
+        <p className="hint" style={{ marginTop: '8px' }}>
+          Stitches voice recordings, timestamps, slides, and visuals of all {sections.length} sections into one master video.
+        </p>
+        {mergeError && <div className="error-banner">{mergeError}</div>}
+      </div>
+
+      {/* Master Merged Final Video Studio */}
+      {mergedData && (
+        <section className="merged-studio-section">
+          <div className="merged-header-bar">
+            <div>
+              <h2>🌟 Master Merged Video Studio</h2>
+              <span className="badge badge-success">
+                {mergedData.rows.length} Total Slides • {fmt(mergedData.duration)} Total Duration
               </span>
             </div>
-
-            <div className="progress-bar-bg glowing">
-              <div
-                className="progress-bar-fill animated-shimmer"
-                style={{
-                  width: `${
-                    genProgress.total > 0
-                      ? Math.round((genProgress.current / genProgress.total) * 100)
-                      : 0
-                  }%`,
-                }}
-              />
-            </div>
-
-            {/* Slide Step Chips */}
-            <div className="gen-steps-track">
-              {slides.map((s, idx) => {
-                const isDone = Boolean(generatedImages[idx]);
-                const isCurrent = isGenerating && genProgress.current === idx + 1;
-                return (
-                  <span
-                    key={s.id || idx}
-                    className={`step-chip ${
-                      isDone ? 'done' : isCurrent ? 'current' : 'pending'
-                    }`}
-                    onClick={() => setPreviewModalIndex(idx)}
-                    title={`Slide #${s.id}: ${
-                      isDone ? 'Generated (Click to preview)' : isCurrent ? 'Generating…' : 'Pending'
-                    }`}
-                  >
-                    {isDone ? '✓' : isCurrent ? '⚡' : '○'} Slide {s.id}
-                  </span>
-                );
-              })}
-            </div>
           </div>
-        )}
 
-        {genStatus && !isGenerating && <p className="status-success">{genStatus}</p>}
-      </section>
-
-      {/* 4. Speech-to-Text & Timestamp Alignment */}
-      <section>
-        <h2>4. Speech-to-Text &amp; Alignment</h2>
-        <div className="row">
-          <select value={model} onChange={(e) => setModel(e.target.value)}>
-            {MODELS.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-          <button onClick={run} disabled={!ready}>
-            Transcribe &amp; Align Slides
-          </button>
-          {words.length > 0 && (
-            <button className="ghost" onClick={realign}>
-              Re-align
-            </button>
-          )}
-        </div>
-        {status && <p className="status">{status}</p>}
-        {error && <p className="error">{error}</p>}
-        {!audio && <p className="hint">Upload a voice recording above to enable transcription.</p>}
-      </section>
-
-      {/* 5. Synchronized Live Video Preview & Controls */}
-      {rows.length > 0 && (
-        <section className="preview-section">
-          <div className="preview-header-bar">
-            <h2>5. Live Synced Video Preview</h2>
-            <span className="badge badge-info">Clean Video Mode</span>
-          </div>
           <p className="hint">
-            Slide images, animations, and voiceover are synchronized in real time. Use the video timeline below to scrub through your video. Click any thumbnail for full-size image preview!
+            All sections have been concatenated seamlessly! Preview the complete video, scrub through the master timeline, or export in full quality.
           </p>
 
-          {/* Clean Canvas Rendering Frame */}
+          {/* Master Canvas Video Preview */}
           <div className="video-player-frame">
             <canvas
-              ref={previewCanvasRef}
+              ref={mergedCanvasRef}
               width={1280}
               height={720}
               className="preview-canvas"
             />
           </div>
 
-          {/* Professional Video Player Timeline (Scrollable & Zoomable) */}
+          {/* Hidden Audio Player for Merged Playback */}
+          {mergedData.audioUrl && (
+            <audio
+              ref={mergedAudioRef}
+              src={mergedData.audioUrl}
+              onPlay={() => setMergedPlaying(true)}
+              onPause={() => setMergedPlaying(false)}
+              onEnded={() => setMergedPlaying(false)}
+              onTimeUpdate={(e) => {
+                const t = e.currentTarget.currentTime;
+                setMergedCurrentTime(t);
+                if (!mergedPlaying) renderMergedPreview(t);
+              }}
+              style={{ display: 'none' }}
+            />
+          )}
+
+          {/* Master Visual Timeline */}
           <VisualTimeline
-            rows={rows}
-            slides={slides}
-            duration={duration}
-            currentTime={currentTime}
-            isPlaying={isPlaying}
-            imageUrls={effectiveImageUrls}
+            rows={mergedData.rows}
+            slides={mergedData.slides}
+            duration={mergedData.duration}
+            currentTime={mergedCurrentTime}
+            isPlaying={mergedPlaying}
+            imageUrls={mergedData.effectiveImageUrls}
             animationMode={animationMode}
-            slideAnimations={slideAnimations}
-            onSeek={handleSeek}
+            slideAnimations={mergedData.slideAnimations}
+            onSeek={handleMergedSeek}
             onTogglePlay={() => {
-              if (audioRef.current) {
-                if (audioRef.current.paused) audioRef.current.play();
-                else audioRef.current.pause();
+              if (mergedAudioRef.current) {
+                if (mergedAudioRef.current.paused) mergedAudioRef.current.play();
+                else mergedAudioRef.current.pause();
               }
             }}
           />
 
-          {/* Collapsible Ellipse List of Slide Images, Prompts & Animations */}
+          {/* Master Slide Ellipse Drawer with Manual Replace Option */}
           <SlideEllipseDrawer
-            rows={rows}
-            slides={slides}
-            duration={duration}
-            currentTime={currentTime}
-            effectiveImageUrls={effectiveImageUrls}
-            generatedImages={generatedImages}
+            drawerTitle="Master Slides &amp; Visuals Shelf"
+            rows={mergedData.rows}
+            slides={mergedData.slides}
+            duration={mergedData.duration}
+            currentTime={mergedCurrentTime}
+            effectiveImageUrls={mergedData.effectiveImageUrls}
+            generatedImages={{}}
+            manualImages={{}}
             animationMode={animationMode}
-            slideAnimations={slideAnimations}
-            slidePrompts={slidePrompts}
-            onSetSlideAnimation={setSlideAnimation}
-            onSetSlidePrompt={setSlidePrompt}
-            onGenerateSlideImage={handleGenerateSingleImage}
-            onPreviewImage={(idx) => setPreviewModalIndex(idx)}
-            onSeek={handleSeek}
-            isGenerating={isGenerating}
+            slideAnimations={mergedData.slideAnimations}
+            slidePrompts={{}}
+            onSetSlideAnimation={(idx, anim) => {
+              setMergedData((prev) => ({
+                ...prev,
+                slideAnimations: { ...prev.slideAnimations, [idx]: anim },
+              }));
+              setTimeout(() => renderMergedPreview(mergedCurrentTime), 20);
+            }}
+            onSetSlidePrompt={() => {}}
+            onGenerateSlideImage={() => {}}
+            onReplaceSlideImage={(idx, file) => {
+              const url = URL.createObjectURL(file);
+              setMergedData((prev) => {
+                const nextUrls = [...prev.effectiveImageUrls];
+                nextUrls[idx] = url;
+                return { ...prev, effectiveImageUrls: nextUrls };
+              });
+              setTimeout(() => renderMergedPreview(mergedCurrentTime), 30);
+            }}
+            onPreviewImage={(idx) => {
+              const url = mergedData.effectiveImageUrls[idx];
+              if (url) setPreviewModalData({ url, title: `Merged Slide #${idx + 1}` });
+            }}
+            onSeek={handleMergedSeek}
           />
 
-          {/* Global Animation & Caption Style Settings */}
-          <div className="customization-panel">
-            <h3>🎨 Global Animation &amp; Caption Style Settings</h3>
-            <div className="customization-grid">
+          {/* Master Export Controls */}
+          <div className="export-controls-bar" style={{ marginTop: '24px' }}>
+            <div className="export-options-row">
               <label>
-                Default Animation Style:
+                Export Resolution:
                 <select
-                  value={animationMode}
-                  onChange={(e) => {
-                    setAnimationMode(e.target.value);
-                    setTimeout(() => renderCurrentPreview(currentTime), 20);
-                  }}
+                  value={resolution}
+                  onChange={(e) => setResolution(e.target.value)}
+                  disabled={isExporting}
                 >
-                  {ANIMATION_TYPES.map((anim) => (
-                    <option key={anim.id} value={anim.id}>
-                      {anim.label}
-                    </option>
-                  ))}
+                  <option value="720p">720p HD (Fast &amp; Crisp - 1280x720)</option>
+                  <option value="1080p">1080p Full HD (Studio Quality - 1920x1080)</option>
                 </select>
-                <small>Used for slides set to Auto / Random.</small>
               </label>
 
-              <label>
-                Caption &amp; Subtitle Style:
-                <select
-                  value={captionStyle}
-                  onChange={(e) => {
-                    setCaptionStyle(e.target.value);
-                    setTimeout(() => renderCurrentPreview(currentTime), 20);
-                  }}
-                >
-                  {CAPTION_STYLES.map((cs) => (
-                    <option key={cs.id} value={cs.id}>
-                      {cs.label}
-                    </option>
-                  ))}
-                </select>
-                <small>Choose between Social Pop, Modern Card, Cinema, or None.</small>
-              </label>
+              <button
+                type="button"
+                className="primary-btn export-btn"
+                disabled={isExporting}
+                onClick={handleExportMergedVideo}
+              >
+                {isExporting ? '⏳ Rendering Video…' : '📥 Export & Download Full Video'}
+              </button>
+
+              <button
+                type="button"
+                className="ghost"
+                onClick={handleExportSrt}
+              >
+                📄 Subtitles (.srt)
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                onClick={handleExportVtt}
+              >
+                📄 Subtitles (.vtt)
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                onClick={handleExportJson}
+              >
+                📊 Timeline (.json)
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                onClick={handleDownloadAllImages}
+              >
+                💾 Download All Images
+              </button>
             </div>
+
+            {isExporting && (
+              <div className="export-progress-panel">
+                <div className="progress-bar-bg">
+                  <div
+                    className="progress-bar-fill animated"
+                    style={{ width: `${exportProgress}%` }}
+                  />
+                </div>
+                <div className="export-progress-info">
+                  <span>{exportStatus}</span>
+                  <strong>{exportProgress}%</strong>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       )}
 
-      {/* 6. Timeline Editor & Prompt Adjustments Table */}
-      {rows.length > 0 && (
-        <section>
-          <h2>6. Slide Timeline, Prompts &amp; Animation Styles</h2>
-          <p className="hint">
-            Customize image prompts, generate/re-roll images, or click on any thumbnail for full-size image preview.
-          </p>
-          <table>
-            <thead>
-              <tr>
-                <th>Slide</th>
-                <th>Image Preview</th>
-                <th>AI Prompt</th>
-                <th>Animation Style</th>
-                <th>Start (s)</th>
-                <th>End</th>
-                <th>Match</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, i) => {
-                const end = rows[i + 1] ? rows[i + 1].start : duration;
-                const isActive = activeSlideIndex === i;
-                const assignedAutoAnim = getSlideAnimation(animationMode, i);
-                const currentSlideAnim = slideAnimations[i] || 'auto';
-                const currentPrompt = slidePrompts[i] ?? slides[i]?.text ?? '';
-                const imgUrl = effectiveImageUrls[i];
-                const isAi = Boolean(generatedImages[i]);
-
-                return (
-                  <tr
-                    key={row.id}
-                    className={`${row.match < 0.5 ? 'weak' : ''} ${isActive ? 'active-row' : ''}`}
-                  >
-                    <td>
-                      <strong>#{row.id}</strong>
-                    </td>
-                    <td>
-                      <div
-                        className="table-img-cell"
-                        onClick={() => setPreviewModalIndex(i)}
-                        title="Click for full-size image preview"
-                      >
-                        {imgUrl ? (
-                          <img
-                            src={imgUrl}
-                            alt={`Slide ${row.id}`}
-                            className="table-thumb clickable"
-                          />
-                        ) : (
-                          <span className="muted-text">none</span>
-                        )}
-                        {isAi && <span className="ai-tiny-tag">AI</span>}
-                      </div>
-                    </td>
-                    <td className="text">
-                      <input
-                        type="text"
-                        className="table-prompt-input"
-                        value={currentPrompt}
-                        onChange={(e) => setSlidePrompt(i, e.target.value)}
-                        placeholder="Image prompt for this slide..."
-                      />
-                    </td>
-                    <td>
-                      <select
-                        className="table-anim-select"
-                        value={currentSlideAnim}
-                        onChange={(e) => setSlideAnimation(i, e.target.value)}
-                        title="Change animation for this slide"
-                      >
-                        <option value="auto">🎲 Auto ({assignedAutoAnim})</option>
-                        <option value="zoom-in">🔍 Zoom In</option>
-                        <option value="zoom-out">🔎 Zoom Out</option>
-                        <option value="pop">✨ Pop &amp; Bounce</option>
-                        <option value="breathe">🫁 Breathe</option>
-                        <option value="slide-left">⬅️ Slide Left</option>
-                        <option value="slide-right">➡️ Slide Right</option>
-                        <option value="slide-up">⬆️ Slide Up</option>
-                        <option value="fade">🌫️ Fade</option>
-                        <option value="pan-drift">🌊 Pan &amp; Drift</option>
-                      </select>
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        value={row.start}
-                        onChange={(e) => setStart(i, e.target.value)}
-                      />
-                    </td>
-                    <td>{fmt(end)}</td>
-                    <td>
-                      <span
-                        className={`match-pill ${row.match >= 0.7 ? 'match-high' : row.match >= 0.4 ? 'match-mid' : 'match-low'}`}
-                      >
-                        {Math.round(row.match * 100)}%
-                      </span>
-                    </td>
-                    <td>
-                      <div className="row-actions">
-                        <button
-                          type="button"
-                          className="ghost small-btn"
-                          disabled={isGenerating}
-                          onClick={() => handleGenerateSingleImage(i)}
-                          title="Generate or re-roll image for this slide"
-                        >
-                          {isAi ? '🔄 Re-roll' : '🎨 Generate'}
-                        </button>
-                        <button
-                          type="button"
-                          className="ghost small-btn"
-                          onClick={() => setPreviewModalIndex(i)}
-                          title="Preview full-size image"
-                        >
-                          👁️ View
-                        </button>
-                        <button
-                          type="button"
-                          className="ghost small-btn"
-                          onClick={() => playFrom(row.start)}
-                        >
-                          Play
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
+      {/* Full-Screen Image Lightbox Modal */}
+      {previewModalData && (
+        <ImagePreviewModal
+          isOpen={Boolean(previewModalData)}
+          images={[previewModalData.url]}
+          currentIndex={0}
+          onClose={() => setPreviewModalData(null)}
+          onSelectIndex={() => {}}
+        />
       )}
-
-      {/* 7. Export Section */}
-      {rows.length > 0 && (
-        <section className="export-section">
-          <h2>7. Export Finished Video &amp; Subtitles</h2>
-
-          <div className="export-grid">
-            {/* Video Export Card */}
-            <div className="export-card">
-              <h3>🎬 Render &amp; Export Video</h3>
-              <p className="hint">
-                Generates a clean video with AI-generated images, animations, voiceover, and captions.
-              </p>
-
-              <div className="export-options">
-                <label className="inline-label">
-                  Resolution:
-                  <select
-                    value={resolution}
-                    onChange={(e) => setResolution(e.target.value)}
-                    disabled={isExporting}
-                  >
-                    <option value="720p">720p HD (1280x720) - Fast</option>
-                    <option value="1080p">1080p Full HD (1920x1080) - Sharp</option>
-                  </select>
-                </label>
-
-                <div className="export-summary-pills">
-                  <span className="badge badge-info">
-                    {Object.values(slideAnimations).filter((v) => v !== 'auto').length > 0
-                      ? `${Object.values(slideAnimations).filter((v) => v !== 'auto').length} custom animations`
-                      : `Global Mode: ${animationMode}`}
-                  </span>
-                  <span className="badge">Captions: {captionStyle}</span>
-                  <span className="badge badge-success">
-                    {Object.keys(generatedImages).length} AI images applied
-                  </span>
-                </div>
-              </div>
-
-              {isExporting ? (
-                <div className="export-progress-box">
-                  <div className="progress-bar-bg">
-                    <div
-                      className="progress-bar-fill"
-                      style={{ width: `${exportProgress}%` }}
-                    />
-                  </div>
-                  <p className="status">{exportStatus}</p>
-                  <button className="danger-btn" onClick={handleCancelExport}>
-                    Cancel Render
-                  </button>
-                </div>
-              ) : (
-                <div className="row">
-                  <button onClick={handleExportVideo} className="primary-btn">
-                    Render &amp; Download Video
-                  </button>
-                </div>
-              )}
-
-              {videoBlobUrl && !isExporting && (
-                <div className="rendered-result">
-                  <p className="success-text">🎉 Video rendered successfully!</p>
-                  <video src={videoBlobUrl} controls className="rendered-video-preview" />
-                  <div className="row">
-                    <button
-                      className="ghost"
-                      onClick={() => {
-                        const a = document.createElement('a');
-                        a.href = videoBlobUrl;
-                        a.download = videoFilename;
-                        a.click();
-                      }}
-                    >
-                      Download Again ({videoFilename})
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Subtitles & Data Export Card */}
-            <div className="export-card">
-              <h3>📝 Subtitles &amp; Timeline Data</h3>
-              <p className="hint">
-                Export standard subtitle files (.srt, .vtt) or complete JSON timing data for use in CapCut, Premiere, or YouTube.
-              </p>
-
-              <div className="export-buttons-stack">
-                <button className="ghost export-btn" onClick={handleExportSrt}>
-                  <span>Download <strong>.SRT</strong> Subtitles</span>
-                  <small>Compatible with Premiere, YouTube, VLC</small>
-                </button>
-
-                <button className="ghost export-btn" onClick={handleExportVtt}>
-                  <span>Download <strong>.VTT</strong> Subtitles</span>
-                  <small>Web standard format for HTML5 video</small>
-                </button>
-
-                <button className="ghost export-btn" onClick={handleExportJson}>
-                  <span>Download <strong>.JSON</strong> Timeline</span>
-                  <small>Full metadata with slide IDs, prompts, and timestamps</small>
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* Interactive Full-Size Image Preview Lightbox Modal */}
-      <ImagePreviewModal
-        isOpen={previewModalIndex !== null}
-        slideIndex={previewModalIndex ?? 0}
-        slides={slides}
-        rows={rows}
-        duration={duration}
-        effectiveImageUrls={effectiveImageUrls}
-        generatedImages={generatedImages}
-        slidePrompts={slidePrompts}
-        slideAnimations={slideAnimations}
-        onClose={() => setPreviewModalIndex(null)}
-        onSelectSlide={(idx) => setPreviewModalIndex(idx)}
-        onGenerateImage={handleGenerateSingleImage}
-        onDownloadImage={handleDownloadSingleImage}
-      />
     </main>
   );
 }
