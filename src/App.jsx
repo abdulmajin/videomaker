@@ -12,6 +12,7 @@ import {
   preloadImages,
   drawVideoFrame,
   CAPTION_STYLES,
+  HOOK_STYLES,
 } from './lib/renderVideo';
 import { ANIMATION_TYPES } from './lib/animations';
 import {
@@ -23,6 +24,7 @@ import SectionEditor from './components/SectionEditor';
 import VisualTimeline from './components/VisualTimeline';
 import SlideEllipseDrawer from './components/SlideEllipseDrawer';
 import ImagePreviewModal from './components/ImagePreviewModal';
+import MasterPromptModal from './components/MasterPromptModal';
 
 const MODELS = [
   { id: 'Xenova/whisper-tiny.en', label: 'Tiny, English (fast, rougher)' },
@@ -70,6 +72,7 @@ function createNewSection(index) {
     inputMode: 'doc',
     images: [],
     slidePrompts: {},
+    textOverlays: {},
     generatedImages: {},
     manualImages: {},
     slideAnimations: {},
@@ -84,6 +87,9 @@ export default function App() {
   const [projectTitle, setProjectTitle] = useState('My Video Project');
   const [model, setModel] = useState(MODELS[0].id);
 
+  // Aspect Ratio & Layout
+  const [aspectRatio, setAspectRatio] = useState('16:9'); // '16:9' | '9:16'
+
   // Global AI Engine & API Key
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('google_ai_key') || '');
   const [showApiKey, setShowApiKey] = useState(false);
@@ -92,9 +98,16 @@ export default function App() {
   const [imageEngine, setImageEngine] = useState('google-imagen');
   const [visualStyle, setVisualStyle] = useState('cinematic');
 
-  // Animation & Subtitle Styling
+  // Animation, Captions & Retention Hooks
   const [animationMode, setAnimationMode] = useState('random');
   const [captionStyle, setCaptionStyle] = useState('modern-card');
+  const [hookStyle, setHookStyle] = useState('punch-stamp'); // 'punch-stamp' | 'chapter-pill' | 'bottom-badge' | 'none'
+
+  // Background Music (BGM) & Auto-Ducking
+  const [bgmFile, setBgmFile] = useState(null);
+  const [bgmUrl, setBgmUrl] = useState(null);
+  const [bgmVolume, setBgmVolume] = useState(0.15);
+  const [autoDuck, setAutoDuck] = useState(true);
 
   // Multi-Section Video Architecture State
   const [sections, setSections] = useState(() => [createNewSection(1)]);
@@ -110,14 +123,22 @@ export default function App() {
   const [exportStatus, setExportStatus] = useState('');
   const [resolution, setResolution] = useState('720p');
 
+  // Master Prompt In-App Generator Modal
+  const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
+
   // Lightbox Modal
-  const [previewModalData, setPreviewModalData] = useState(null); // { url, title }
+  const [previewModalData, setPreviewModalData] = useState(null);
+
+  // Auto-save banner feedback
+  const [saveNotice, setSaveNotice] = useState('');
 
   const mergedAudioRef = useRef(null);
+  const mergedBgmAudioRef = useRef(null);
   const mergedCanvasRef = useRef(null);
   const mergedAnimFrameRef = useRef(null);
   const preloadedMergedImagesRef = useRef([]);
   const abortControllerRef = useRef(null);
+  const loadFileInputRef = useRef(null);
 
   // Save API key
   const handleApiKeyChange = (val) => {
@@ -178,6 +199,14 @@ export default function App() {
     });
   };
 
+  // Background Music (BGM) upload
+  const handleBgmChange = (file) => {
+    if (!file) return;
+    setBgmFile(file);
+    const url = URL.createObjectURL(file);
+    setBgmUrl(url);
+  };
+
   // Preload merged images when mergedData changes
   useEffect(() => {
     if (!mergedData?.effectiveImageUrls) return;
@@ -208,10 +237,12 @@ export default function App() {
         animationMode,
         slideAnimations: mergedData.slideAnimations || {},
         captionStyle,
-        title: '', // Rule: Title should NOT appear on video
+        hookStyle,
+        textOverlays: mergedData.textOverlays || {},
+        title: '',
       });
     },
-    [mergedData, animationMode, captionStyle]
+    [mergedData, animationMode, captionStyle, hookStyle]
   );
 
   // Playback loop for master merged video
@@ -219,7 +250,12 @@ export default function App() {
     if (!mergedPlaying) {
       if (mergedAnimFrameRef.current) cancelAnimationFrame(mergedAnimFrameRef.current);
       renderMergedPreview(mergedCurrentTime);
+      if (mergedBgmAudioRef.current) mergedBgmAudioRef.current.pause();
       return;
+    }
+
+    if (mergedBgmAudioRef.current && bgmUrl) {
+      mergedBgmAudioRef.current.play().catch(() => {});
     }
 
     function loop() {
@@ -227,6 +263,22 @@ export default function App() {
         const t = mergedAudioRef.current.currentTime;
         setMergedCurrentTime(t);
         renderMergedPreview(t);
+
+        // BGM live ducking
+        if (mergedBgmAudioRef.current && autoDuck) {
+          let isSpeaking = false;
+          if (mergedData?.rows) {
+            for (let i = 0; i < mergedData.rows.length; i++) {
+              const rStart = mergedData.rows[i].start;
+              const rEnd = mergedData.rows[i + 1] ? mergedData.rows[i + 1].start : mergedData.duration;
+              if (t >= rStart && t <= rEnd) {
+                isSpeaking = true;
+                break;
+              }
+            }
+          }
+          mergedBgmAudioRef.current.volume = isSpeaking ? bgmVolume * 0.25 : bgmVolume;
+        }
       }
       mergedAnimFrameRef.current = requestAnimationFrame(loop);
     }
@@ -235,12 +287,13 @@ export default function App() {
     return () => {
       if (mergedAnimFrameRef.current) cancelAnimationFrame(mergedAnimFrameRef.current);
     };
-  }, [mergedPlaying, renderMergedPreview, mergedCurrentTime]);
+  }, [mergedPlaying, renderMergedPreview, mergedCurrentTime, bgmUrl, autoDuck, bgmVolume, mergedData]);
 
   const handleMergedSeek = (t) => {
     const clamped = Math.max(0, Math.min(mergedData?.duration || 1, t));
     setMergedCurrentTime(clamped);
     if (mergedAudioRef.current) mergedAudioRef.current.currentTime = clamped;
+    if (mergedBgmAudioRef.current) mergedBgmAudioRef.current.currentTime = clamped % (mergedBgmAudioRef.current.duration || 1);
     renderMergedPreview(clamped);
   };
 
@@ -267,11 +320,12 @@ export default function App() {
 
       const mergedAudioUrl = URL.createObjectURL(mergedAudioResult.blob);
 
-      // 2. Stitch rows, slides, and images with cumulative time offsets
+      // 2. Stitch rows, slides, images, and retention hooks with cumulative time offsets
       const mergedRows = [];
       const mergedSlides = [];
       const mergedImageUrls = [];
       const mergedSlideAnimations = {};
+      const mergedTextOverlays = {};
       let globalSlideId = 1;
       let timeOffset = 0;
 
@@ -284,6 +338,7 @@ export default function App() {
           const slide = secSlides[rowIdx] || {};
           const imgUrl = secImages[rowIdx] || null;
           const anim = sec.slideAnimations?.[rowIdx] || 'auto';
+          const hook = sec.textOverlays?.[rowIdx] || '';
 
           mergedRows.push({
             id: globalSlideId,
@@ -297,11 +352,13 @@ export default function App() {
             id: globalSlideId,
             text: slide.text || row.text || '',
             raw: slide.raw || '',
+            textOverlay: hook,
             sectionIndex: secIdx,
           });
 
           mergedImageUrls.push(imgUrl);
           mergedSlideAnimations[globalSlideId - 1] = anim;
+          mergedTextOverlays[globalSlideId - 1] = hook;
           globalSlideId++;
         });
 
@@ -316,6 +373,7 @@ export default function App() {
         slides: mergedSlides,
         effectiveImageUrls: mergedImageUrls,
         slideAnimations: mergedSlideAnimations,
+        textOverlays: mergedTextOverlays,
       });
 
       setTimeout(() => renderMergedPreview(0), 100);
@@ -335,7 +393,11 @@ export default function App() {
     setExportStatus('Starting video render…');
     abortControllerRef.current = new AbortController();
 
-    const [w, h] = resolution === '1080p' ? [1920, 1080] : [1280, 720];
+    const isVertical = aspectRatio === '9:16';
+    let [w, h] = resolution === '1080p' ? [1920, 1080] : [1280, 720];
+    if (isVertical) {
+      [w, h] = resolution === '1080p' ? [1080, 1920] : [720, 1280];
+    }
 
     try {
       const { blob, filename } = await renderVideo({
@@ -351,6 +413,11 @@ export default function App() {
         animationMode,
         slideAnimations: mergedData.slideAnimations,
         captionStyle,
+        hookStyle,
+        textOverlays: mergedData.textOverlays,
+        bgmFile,
+        bgmVolume,
+        autoDuck,
         onProgress: (pct, msg) => {
           setExportProgress(pct);
           setExportStatus(msg);
@@ -412,22 +479,146 @@ export default function App() {
     });
   };
 
+  // Project Save & Load
+  const handleSaveProject = () => {
+    const projectPayload = {
+      version: '2.0',
+      savedAt: new Date().toISOString(),
+      projectTitle,
+      aspectRatio,
+      animationMode,
+      captionStyle,
+      hookStyle,
+      imageEngine,
+      visualStyle,
+      bgmVolume,
+      autoDuck,
+      sections: sections.map((s) => ({
+        id: s.id,
+        title: s.title,
+        scriptText: s.scriptText,
+        inputMode: s.inputMode,
+        slidePrompts: s.slidePrompts,
+        textOverlays: s.textOverlays,
+        slideAnimations: s.slideAnimations,
+      })),
+    };
+
+    const json = JSON.stringify(projectPayload, null, 2);
+    const safeTitle = (projectTitle || 'project').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
+    downloadText(json, `${safeTitle}.videomaker.json`, 'application/json');
+    setSaveNotice('✓ Project saved to file!');
+    setTimeout(() => setSaveNotice(''), 3000);
+  };
+
+  const handleLoadProjectFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+
+      if (data.projectTitle) setProjectTitle(data.projectTitle);
+      if (data.aspectRatio) setAspectRatio(data.aspectRatio);
+      if (data.animationMode) setAnimationMode(data.animationMode);
+      if (data.captionStyle) setCaptionStyle(data.captionStyle);
+      if (data.hookStyle) setHookStyle(data.hookStyle);
+      if (data.imageEngine) setImageEngine(data.imageEngine);
+      if (data.visualStyle) setVisualStyle(data.visualStyle);
+
+      if (Array.isArray(data.sections) && data.sections.length > 0) {
+        setSections(
+          data.sections.map((s, idx) => ({
+            ...createNewSection(idx + 1),
+            ...s,
+            id: s.id || `sec-${Date.now()}-${idx + 1}`,
+          }))
+        );
+      }
+
+      setSaveNotice('✓ Project loaded successfully!');
+      setTimeout(() => setSaveNotice(''), 3000);
+    } catch (err) {
+      alert(`Could not parse project file: ${err.message}`);
+    }
+  };
+
+  const isVertical = aspectRatio === '9:16';
+
   return (
     <main>
       <header>
-        <div className="header-badge">Video Maker Studio v2.0 • Multi-Section Architecture</div>
+        <div className="header-badge">Video Maker Studio Pro v2.0</div>
         <h1>Multi-Section Video Maker</h1>
         <p>
-          Organize your video into sections with independent voiceover, script, images, manual replacement, and video previews.
-          Then merge all sections into one seamless master video!
+          Organize your video into sections, generate character-consistent AI storyboards, apply retention hooks, mix BGM, and export in 16:9 or 9:16 vertical!
         </p>
+
+        {/* Studio Quick Actions Bar */}
+        <div className="studio-top-bar">
+          <button
+            type="button"
+            className="primary-btn pulse-glow"
+            onClick={() => setIsPromptModalOpen(true)}
+          >
+            ✨ In-App Master Storyboard Generator
+          </button>
+
+          <div className="aspect-ratio-selector">
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#94a3b8' }}>Format:</span>
+            <button
+              type="button"
+              className={`aspect-pill ${aspectRatio === '16:9' ? 'active' : ''}`}
+              onClick={() => setAspectRatio('16:9')}
+            >
+              🖥️ 16:9 YouTube
+            </button>
+            <button
+              type="button"
+              className={`aspect-pill ${aspectRatio === '9:16' ? 'active' : ''}`}
+              onClick={() => setAspectRatio('9:16')}
+            >
+              📱 9:16 TikTok / Shorts
+            </button>
+          </div>
+
+          <div className="project-file-actions">
+            <button
+              type="button"
+              className="ghost small-btn"
+              onClick={handleSaveProject}
+              title="Save project to .videomaker.json"
+            >
+              💾 Save Project
+            </button>
+
+            <button
+              type="button"
+              className="ghost small-btn"
+              onClick={() => loadFileInputRef.current?.click()}
+              title="Load saved .videomaker.json"
+            >
+              📂 Load Project
+            </button>
+            <input
+              type="file"
+              ref={loadFileInputRef}
+              accept=".json,.videomaker.json"
+              style={{ display: 'none' }}
+              onChange={handleLoadProjectFile}
+            />
+          </div>
+        </div>
+
+        {saveNotice && <div className="status-banner">{saveNotice}</div>}
       </header>
 
       {/* Global Project Configuration */}
       <section className="global-config-section">
         <div className="section-header-row">
           <div>
-            <h2>Global Settings &amp; AI Studio</h2>
+            <h2>Global Settings, Audio &amp; Retention Hooks</h2>
             <p className="hint">Configure project metadata, AI image generation, animation, and caption styles.</p>
           </div>
         </div>
@@ -454,6 +645,44 @@ export default function App() {
           </label>
         </div>
 
+        {/* Background Music (BGM) & Auto-Ducking Row */}
+        <div className="bgm-control-box" style={{ marginTop: '14px' }}>
+          <div className="bgm-header-row">
+            <span style={{ fontWeight: 700, fontSize: '0.90rem' }}>🎵 Background Music (BGM) Track:</span>
+            <label className="autoduck-checkbox">
+              <input
+                type="checkbox"
+                checked={autoDuck}
+                onChange={(e) => setAutoDuck(e.target.checked)}
+              />
+              <span>Auto-Duck (quieter during speech, louder in pauses)</span>
+            </label>
+          </div>
+
+          <div className="bgm-inputs-row">
+            <input
+              type="file"
+              accept="audio/*"
+              onChange={(e) => handleBgmChange(e.target.files[0])}
+            />
+            {bgmFile && <span className="badge badge-success">✓ {bgmFile.name}</span>}
+
+            <div className="volume-slider-group">
+              <span style={{ fontSize: '0.80rem' }}>BGM Vol:</span>
+              <input
+                type="range"
+                min="0"
+                max="0.5"
+                step="0.02"
+                value={bgmVolume}
+                onChange={(e) => setBgmVolume(parseFloat(e.target.value))}
+              />
+              <span style={{ fontSize: '0.80rem' }}>{Math.round(bgmVolume * 200)}%</span>
+            </div>
+          </div>
+        </div>
+
+        {/* AI Studio & Engine Row */}
         <div className="image-gen-grid" style={{ marginTop: '14px' }}>
           <label>
             Image Generation Engine:
@@ -535,7 +764,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Global Animation & Subtitle Presets */}
+        {/* Global Animation, Subtitles & Retention Hooks */}
         <div className="animation-options-grid" style={{ marginTop: '14px' }}>
           <label>
             Slide Entry Animation Mode:
@@ -550,7 +779,7 @@ export default function App() {
               ))}
             </select>
             <small className="hint">
-              Rules active: Animate enter only (no exit transitions). Timestamps ≤ 2.5s skip animation.
+              Rules: Entry only (no exit transitions). ≤ 2.5s duration skips animation.
             </small>
           </label>
 
@@ -567,16 +796,33 @@ export default function App() {
               ))}
             </select>
           </label>
+
+          <label>
+            Kinetic Retention Hook Style:
+            <select
+              value={hookStyle}
+              onChange={(e) => setHookStyle(e.target.value)}
+            >
+              {HOOK_STYLES.map((h) => (
+                <option key={h.id} value={h.id}>
+                  {h.label}
+                </option>
+              ))}
+            </select>
+            <small className="hint">
+              Pops bold hook keywords on-screen for the first 1.8s of each slide.
+            </small>
+          </label>
         </div>
       </section>
 
-      {/* Sections Control Panel: Provision to choose how many sections needed */}
+      {/* Sections Control Panel */}
       <section className="sections-control-panel">
         <div className="sections-control-header">
           <div>
             <h2>Video Sections ({sections.length})</h2>
             <p className="hint">
-              Select how many sections you need or add sections dynamically. Each section has its own script, voice, images, and video preview.
+              Each section has its own voiceover, script, images, and video preview.
             </p>
           </div>
 
@@ -621,6 +867,8 @@ export default function App() {
             visualStyle={visualStyle}
             animationMode={animationMode}
             captionStyle={captionStyle}
+            hookStyle={hookStyle}
+            aspectRatio={aspectRatio}
             whisperModel={model}
             transcribeFn={transcribe}
             onUpdateSection={(updater) => handleUpdateSection(idx, updater)}
@@ -641,7 +889,7 @@ export default function App() {
           {isMerging ? '⏳ Merging Audio & Slides…' : '🎬 Merge All Sections into Final Video'}
         </button>
         <p className="hint" style={{ marginTop: '8px' }}>
-          Stitches voice recordings, timestamps, slides, and visuals of all {sections.length} sections into one master video.
+          Stitches voice recordings, timestamps, slides, retention hooks, and visuals of all {sections.length} sections into one master video.
         </p>
         {mergeError && <div className="error-banner">{mergeError}</div>}
       </div>
@@ -651,7 +899,7 @@ export default function App() {
         <section className="merged-studio-section">
           <div className="merged-header-bar">
             <div>
-              <h2>🌟 Master Merged Video Studio</h2>
+              <h2>🌟 Master Merged Video Studio ({aspectRatio})</h2>
               <span className="badge badge-success">
                 {mergedData.rows.length} Total Slides • {fmt(mergedData.duration)} Total Duration
               </span>
@@ -663,16 +911,16 @@ export default function App() {
           </p>
 
           {/* Master Canvas Video Preview */}
-          <div className="video-player-frame">
+          <div className={`video-player-frame ${isVertical ? 'vertical-frame' : ''}`}>
             <canvas
               ref={mergedCanvasRef}
-              width={1280}
-              height={720}
-              className="preview-canvas"
+              width={isVertical ? 720 : 1280}
+              height={isVertical ? 1280 : 720}
+              className={`preview-canvas ${isVertical ? 'vertical-canvas' : ''}`}
             />
           </div>
 
-          {/* Hidden Audio Player for Merged Playback */}
+          {/* Hidden Audio Players for Merged Playback */}
           {mergedData.audioUrl && (
             <audio
               ref={mergedAudioRef}
@@ -685,6 +933,15 @@ export default function App() {
                 setMergedCurrentTime(t);
                 if (!mergedPlaying) renderMergedPreview(t);
               }}
+              style={{ display: 'none' }}
+            />
+          )}
+
+          {bgmUrl && (
+            <audio
+              ref={mergedBgmAudioRef}
+              src={bgmUrl}
+              loop
               style={{ display: 'none' }}
             />
           )}
@@ -708,9 +965,9 @@ export default function App() {
             }}
           />
 
-          {/* Master Slide Ellipse Drawer with Manual Replace Option */}
+          {/* Master Slide Ellipse Drawer with Manual Replace Option & Hooks */}
           <SlideEllipseDrawer
-            drawerTitle="Master Slides &amp; Visuals Shelf"
+            drawerTitle="Master Slides, Hooks &amp; Visuals Shelf"
             rows={mergedData.rows}
             slides={mergedData.slides}
             duration={mergedData.duration}
@@ -721,6 +978,7 @@ export default function App() {
             animationMode={animationMode}
             slideAnimations={mergedData.slideAnimations}
             slidePrompts={{}}
+            textOverlays={mergedData.textOverlays || {}}
             onSetSlideAnimation={(idx, anim) => {
               setMergedData((prev) => ({
                 ...prev,
@@ -729,6 +987,13 @@ export default function App() {
               setTimeout(() => renderMergedPreview(mergedCurrentTime), 20);
             }}
             onSetSlidePrompt={() => {}}
+            onSetTextOverlay={(idx, hook) => {
+              setMergedData((prev) => ({
+                ...prev,
+                textOverlays: { ...(prev.textOverlays || {}), [idx]: hook },
+              }));
+              setTimeout(() => renderMergedPreview(mergedCurrentTime), 20);
+            }}
             onGenerateSlideImage={() => {}}
             onReplaceSlideImage={(idx, file) => {
               const url = URL.createObjectURL(file);
@@ -756,8 +1021,8 @@ export default function App() {
                   onChange={(e) => setResolution(e.target.value)}
                   disabled={isExporting}
                 >
-                  <option value="720p">720p HD (Fast &amp; Crisp - 1280x720)</option>
-                  <option value="1080p">1080p Full HD (Studio Quality - 1920x1080)</option>
+                  <option value="720p">720p HD ({isVertical ? '720x1280' : '1280x720'})</option>
+                  <option value="1080p">1080p Full HD ({isVertical ? '1080x1920' : '1920x1080'})</option>
                 </select>
               </label>
 
@@ -767,7 +1032,7 @@ export default function App() {
                 disabled={isExporting}
                 onClick={handleExportMergedVideo}
               >
-                {isExporting ? '⏳ Rendering Video…' : '📥 Export & Download Full Video'}
+                {isExporting ? '⏳ Rendering Video…' : `📥 Export ${aspectRatio} Video`}
               </button>
 
               <button
@@ -817,6 +1082,26 @@ export default function App() {
           </div>
         </section>
       )}
+
+      {/* In-App Master Storyboard & Prompt Generator Modal */}
+      <MasterPromptModal
+        isOpen={isPromptModalOpen}
+        onClose={() => setIsPromptModalOpen(false)}
+        sections={sections}
+        activeSectionIndex={0}
+        onApplyToSection={(sectionIdx, data) => {
+          handleUpdateSection(sectionIdx, (prev) => ({
+            ...prev,
+            scriptText: data.scriptText,
+            uploadedDocName: data.uploadedDocName || prev.uploadedDocName,
+            slidePrompts: { ...(prev.slidePrompts || {}), ...(data.slidePrompts || {}) },
+            textOverlays: { ...(prev.textOverlays || {}), ...(data.textOverlays || {}) },
+            rows: [],
+          }));
+          setSaveNotice(`✓ Storyboard & Prompts applied to Section #${sectionIdx + 1}!`);
+          setTimeout(() => setSaveNotice(''), 3500);
+        }}
+      />
 
       {/* Full-Screen Image Lightbox Modal */}
       {previewModalData && (

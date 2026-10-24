@@ -19,8 +19,10 @@ export default function SlideEllipseDrawer({
   animationMode = 'random',
   slideAnimations = {},
   slidePrompts = {},
+  textOverlays = {},
   onSetSlideAnimation = () => {},
   onSetSlidePrompt = () => {},
+  onSetTextOverlay = () => {},
   onGenerateSlideImage = () => {},
   onReplaceSlideImage = () => {},
   onPreviewImage = () => {},
@@ -175,6 +177,19 @@ export default function SlideEllipseDrawer({
                       <option value="fade">🌫️ Smooth Fade</option>
                       <option value="pan-drift">🌊 Soft Pan Settle</option>
                     </select>
+                  </div>
+
+                  {/* Retention Hook / Text Overlay Input */}
+                  <div className="ellipse-hook-box" onClick={(e) => e.stopPropagation()}>
+                    <label className="ellipse-select-label">Retention Hook (Overlay):</label>
+                    <input
+                      type="text"
+                      className="ellipse-hook-input"
+                      value={textOverlays[i] || ''}
+                      onChange={(e) => onSetTextOverlay(i, e.target.value)}
+                      placeholder="e.g. SHE NOTICES"
+                      title="Bold keyword stamped on video frame during first 1.8s"
+                    />
                   </div>
 
                   {/* Manual Replace of Image & AI Prompt Snippet */}

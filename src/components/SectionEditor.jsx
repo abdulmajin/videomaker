@@ -4,7 +4,8 @@ import { parseScript, matchImages } from '../lib/parseScript';
 import { decodeAudio } from '../lib/audio';
 import { alignSlides } from '../lib/align';
 import { preloadImages, drawVideoFrame } from '../lib/renderVideo';
-import { enhancePrompt, generateSlideImage } from '../lib/imageGen';
+import { generateSlideImage } from '../lib/imageGen';
+import { synthesizeSpeechToWav, startMicrophoneRecording } from '../lib/tts';
 import VisualTimeline from './VisualTimeline';
 import SlideEllipseDrawer from './SlideEllipseDrawer';
 
@@ -24,6 +25,8 @@ export default function SectionEditor({
   visualStyle = 'cinematic',
   animationMode = 'random',
   captionStyle = 'modern-card',
+  hookStyle = 'punch-stamp',
+  aspectRatio = '16:9',
   whisperModel = 'Xenova/whisper-tiny.en',
   transcribeFn,
   onUpdateSection,
@@ -37,6 +40,12 @@ export default function SectionEditor({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcribeStatus, setTranscribeStatus] = useState('');
   const [localError, setLocalError] = useState('');
+
+  // Voice synthesis & mic recorder state
+  const [isSynthesizing, setIsSynthesizing] = useState(false);
+  const [ttsStatus, setTtsStatus] = useState('');
+  const [isRecordingMic, setIsRecordingMic] = useState(false);
+  const recorderRef = useRef(null);
 
   const audioRef = useRef(null);
   const canvasRef = useRef(null);
@@ -104,10 +113,21 @@ export default function SectionEditor({
         animationMode,
         slideAnimations: section.slideAnimations || {},
         captionStyle,
-        title: '', // Rule: Title should NOT appear on video
+        hookStyle,
+        textOverlays: section.textOverlays || {},
+        title: '',
       });
     },
-    [section.rows, section.duration, slides, animationMode, section.slideAnimations, captionStyle]
+    [
+      section.rows,
+      section.duration,
+      slides,
+      animationMode,
+      section.slideAnimations,
+      captionStyle,
+      hookStyle,
+      section.textOverlays,
+    ]
   );
 
   // Playback animation loop
@@ -145,23 +165,98 @@ export default function SectionEditor({
         audio: file,
         audioUrl,
         duration,
-        rows: [], // Reset alignment on audio change
+        rows: [],
       }));
     } catch (err) {
       setLocalError(`Audio decode error: ${err.message}`);
     }
   };
 
-  // Script file selection (.pdf, .docx, .txt, .csv)
+  // Text-to-Speech (TTS) Voice Synthesis
+  const handleSynthesizeTts = async () => {
+    if (!section.scriptText?.trim()) {
+      setLocalError('Please add script text first before generating voiceover.');
+      return;
+    }
+    setLocalError('');
+    setIsSynthesizing(true);
+    setTtsStatus('Synthesizing speech…');
+    try {
+      const res = await synthesizeSpeechToWav(section.scriptText, {
+        onProgress: (pct, msg) => setTtsStatus(msg),
+      });
+      const audioUrl = URL.createObjectURL(res.blob);
+      onUpdateSection((prev) => ({
+        ...prev,
+        audio: res.blob,
+        audioUrl,
+        duration: res.duration,
+        rows: [],
+      }));
+      setTtsStatus('✓ Voiceover generated!');
+      setTimeout(() => setTtsStatus(''), 3000);
+    } catch (e) {
+      setLocalError(`Voice synthesis failed: ${e.message}`);
+      setTtsStatus('');
+    } finally {
+      setIsSynthesizing(false);
+    }
+  };
+
+  // Live Microphone Voiceover Recording
+  const handleToggleMicRecord = async () => {
+    if (isRecordingMic) {
+      if (recorderRef.current) {
+        setTtsStatus('Processing microphone audio…');
+        try {
+          const res = await recorderRef.current.stop();
+          const audioUrl = URL.createObjectURL(res.blob);
+          onUpdateSection((prev) => ({
+            ...prev,
+            audio: res.blob,
+            audioUrl,
+            duration: res.duration,
+            rows: [],
+          }));
+          setTtsStatus('✓ Mic voiceover saved!');
+          setTimeout(() => setTtsStatus(''), 3000);
+        } catch (e) {
+          setLocalError(`Mic processing error: ${e.message}`);
+        } finally {
+          setIsRecordingMic(false);
+        }
+      }
+    } else {
+      try {
+        setLocalError('');
+        const rec = await startMicrophoneRecording();
+        recorderRef.current = rec;
+        setIsRecordingMic(true);
+        setTtsStatus('🔴 Recording mic… speak now!');
+      } catch (err) {
+        setLocalError(`Microphone access error: ${err.message}`);
+      }
+    }
+  };
+
+  // Script file selection (.pdf, .docx, .txt, .csv) with Full CSV Auto-Import
   const handleScriptFile = async (file) => {
     if (!file) return;
     setLocalError('');
     try {
-      const text = await readDoc(file);
+      const docRes = await readDoc(file);
       onUpdateSection((prev) => ({
         ...prev,
-        scriptText: text,
+        scriptText: docRes.scriptText || '',
         uploadedDocName: file.name,
+        slidePrompts: {
+          ...(prev.slidePrompts || {}),
+          ...(docRes.slidePrompts || {}),
+        },
+        textOverlays: {
+          ...(prev.textOverlays || {}),
+          ...(docRes.textOverlays || {}),
+        },
         rows: [],
       }));
     } catch (err) {
@@ -172,7 +267,7 @@ export default function SectionEditor({
   // Transcribe & Align for this section
   const handleTranscribeAndAlign = async () => {
     if (!section.audio) {
-      setLocalError('Please upload voiceover audio for this section.');
+      setLocalError('Please upload, synthesize, or record voiceover audio for this section.');
       return;
     }
     if (!slides.length) {
@@ -242,6 +337,7 @@ export default function SectionEditor({
         apiKey,
         engine: imageEngine,
         style: visualStyle,
+        aspectRatio,
       });
 
       const url = URL.createObjectURL(res.blob);
@@ -287,6 +383,7 @@ export default function SectionEditor({
           apiKey,
           engine: imageEngine,
           style: visualStyle,
+          aspectRatio,
         });
 
         const url = URL.createObjectURL(res.blob);
@@ -320,6 +417,7 @@ export default function SectionEditor({
 
   const isCollapsed = section.isCollapsed || false;
   const isAligned = Boolean(section.rows?.length);
+  const isVertical = aspectRatio === '9:16';
 
   return (
     <div className={`section-editor-box ${isCollapsed ? 'collapsed' : ''}`}>
@@ -381,11 +479,36 @@ export default function SectionEditor({
       {/* 2. Expanded Section Content */}
       {!isCollapsed && (
         <div className="section-editor-body">
-          {/* Section Voice Audio */}
+          {/* Section Voice Audio (Upload, AI TTS, or Live Mic Recording) */}
           <div className="section-subblock">
-            <label className="section-subblock-title">
-              🎙️ Voiceover Audio for {section.title}:
-            </label>
+            <div className="section-subblock-header">
+              <label className="section-subblock-title">
+                🎙️ Voiceover Audio for {section.title}:
+              </label>
+
+              <div className="voice-method-actions">
+                <button
+                  type="button"
+                  className="ghost small-btn"
+                  disabled={isSynthesizing || isRecordingMic}
+                  onClick={handleSynthesizeTts}
+                  title="Generate high quality voiceover from script text"
+                >
+                  {isSynthesizing ? '⏳ Generating TTS…' : '🤖 AI Voice (TTS)'}
+                </button>
+
+                <button
+                  type="button"
+                  className={`small-btn ${isRecordingMic ? 'danger-btn' : 'ghost'}`}
+                  disabled={isSynthesizing}
+                  onClick={handleToggleMicRecord}
+                  title="Record your voiceover directly using microphone"
+                >
+                  {isRecordingMic ? '⏹️ Stop Recording' : '🔴 Record Mic'}
+                </button>
+              </div>
+            </div>
+
             <div className="audio-upload-row">
               <input
                 type="file"
@@ -409,9 +532,11 @@ export default function SectionEditor({
                 />
               )}
             </div>
+
+            {ttsStatus && <div className="status-inline" style={{ marginTop: '6px' }}>{ttsStatus}</div>}
           </div>
 
-          {/* Section Script & Slide Text */}
+          {/* Section Script & Slide Mapping */}
           <div className="section-subblock">
             <div className="section-subblock-header">
               <label className="section-subblock-title">
@@ -427,7 +552,7 @@ export default function SectionEditor({
                     onUpdateSection((prev) => ({ ...prev, inputMode: 'doc' }))
                   }
                 >
-                  📁 Upload Document
+                  📁 Upload Document / CSV
                 </button>
                 <button
                   type="button"
@@ -454,14 +579,14 @@ export default function SectionEditor({
               </div>
             </div>
 
-            {/* Document Upload Tab */}
+            {/* Document / CSV Upload Tab */}
             {(section.inputMode || 'doc') === 'doc' && (
               <div className="file-drop-card compact-card">
                 <label className="file-upload-label">
                   <span className="file-upload-icon">📄</span>
-                  <strong>Choose Script File (.pdf, .docx, .txt, or .csv)</strong>
+                  <strong>Choose Script or Storyboard CSV (.csv, .pdf, .docx, .txt)</strong>
                   <span className="file-upload-hint">
-                    Each line becomes a slide (e.g. <code>Slide 1: The boy is playing</code>).
+                    Upload your Master Prompt CSV to auto-fill slides, image prompts, and retention hooks in 1 click!
                   </span>
                   <input
                     type="file"
@@ -469,12 +594,12 @@ export default function SectionEditor({
                     className="hidden-file-input"
                     onChange={(e) => handleScriptFile(e.target.files[0])}
                   />
-                  <span className="browse-files-btn">📂 Browse Script</span>
+                  <span className="browse-files-btn">📂 Browse Script or CSV</span>
                 </label>
                 {section.uploadedDocName && (
                   <div className="uploaded-file-tag">
                     <span>✓ Loaded: <strong>{section.uploadedDocName}</strong></span>
-                    <small>({slides.length} slides)</small>
+                    <small>({slides.length} slides • {Object.keys(section.textOverlays || {}).length} hooks)</small>
                   </div>
                 )}
               </div>
@@ -553,16 +678,16 @@ export default function SectionEditor({
           {isAligned && (
             <div className="section-preview-wrapper">
               <div className="section-preview-header">
-                <h4>🎬 {section.title} - Video Preview</h4>
+                <h4>🎬 {section.title} - Video Preview ({aspectRatio})</h4>
                 <span className="badge badge-info">Preview Only</span>
               </div>
 
-              <div className="video-player-frame section-frame">
+              <div className={`video-player-frame section-frame ${isVertical ? 'vertical-frame' : ''}`}>
                 <canvas
                   ref={canvasRef}
-                  width={1280}
-                  height={720}
-                  className="preview-canvas"
+                  width={isVertical ? 720 : 1280}
+                  height={isVertical ? 1280 : 720}
+                  className={`preview-canvas ${isVertical ? 'vertical-canvas' : ''}`}
                 />
               </div>
 
@@ -585,9 +710,9 @@ export default function SectionEditor({
                 }}
               />
 
-              {/* Section Slide Ellipse Drawer with Manual Image Replacement */}
+              {/* Section Slide Ellipse Drawer with Manual Image Replacement & Retention Hooks */}
               <SlideEllipseDrawer
-                drawerTitle={`${section.title} - Slides & Manual Image Replacement`}
+                drawerTitle={`${section.title} - Slides, Hooks & Manual Image Replacement`}
                 rows={section.rows}
                 slides={slides}
                 duration={section.duration || 1}
@@ -598,6 +723,7 @@ export default function SectionEditor({
                 animationMode={animationMode}
                 slideAnimations={section.slideAnimations || {}}
                 slidePrompts={section.slidePrompts || {}}
+                textOverlays={section.textOverlays || {}}
                 onSetSlideAnimation={(idx, anim) => {
                   onUpdateSection((prev) => ({
                     ...prev,
@@ -616,6 +742,16 @@ export default function SectionEditor({
                       [idx]: prompt,
                     },
                   }));
+                }}
+                onSetTextOverlay={(idx, hook) => {
+                  onUpdateSection((prev) => ({
+                    ...prev,
+                    textOverlays: {
+                      ...(prev.textOverlays || {}),
+                      [idx]: hook,
+                    },
+                  }));
+                  setTimeout(() => renderCurrentPreview(currentTime), 20);
                 }}
                 onGenerateSlideImage={handleGenerateSlideImage}
                 onReplaceSlideImage={handleReplaceSlideImage}

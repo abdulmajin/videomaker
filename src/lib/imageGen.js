@@ -325,12 +325,17 @@ export async function generateSlideImage({
   apiKey = '',
   engine = 'google-imagen',
   style = 'cinematic',
+  aspectRatio = '16:9',
 }) {
-  const finalPrompt = prompt.includes('16:9') ? prompt : enhancePrompt(prompt, style);
+  const isVertical = aspectRatio === '9:16';
+  const finalPrompt = prompt.includes('16:9') || prompt.includes('9:16')
+    ? prompt
+    : enhancePrompt(prompt, style);
 
   if (engine === 'google-imagen') {
-    return generateGoogleImagen({ prompt: finalPrompt, apiKey, aspectRatio: '16:9' });
+    return generateGoogleImagen({ prompt: finalPrompt, apiKey, aspectRatio });
   } else {
-    return generateFreeAI({ prompt: finalPrompt, width: 1280, height: 720 });
+    const [w, h] = isVertical ? [720, 1280] : [1280, 720];
+    return generateFreeAI({ prompt: finalPrompt, width: w, height: h });
   }
 }
