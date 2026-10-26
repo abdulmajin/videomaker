@@ -25,6 +25,39 @@ import VisualTimeline from './components/VisualTimeline';
 import SlideEllipseDrawer from './components/SlideEllipseDrawer';
 import ImagePreviewModal from './components/ImagePreviewModal';
 import MasterPromptModal from './components/MasterPromptModal';
+import StudioPage from './pages/StudioPage';
+
+// ─── Helpers: blob URL ↔ base64 data URL (for project save/restore) ──────────
+async function blobUrlToDataUrl(url) {
+  if (!url || url.startsWith('data:')) return url;
+  try {
+    const resp = await fetch(url);
+    const blob = await resp.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+function dataUrlToBlobUrl(dataUrl) {
+  if (!dataUrl || !dataUrl.startsWith('data:')) return dataUrl;
+  try {
+    const [header, b64] = dataUrl.split(',');
+    const mime = header.match(/:(.*?);/)?.[1] || 'application/octet-stream';
+    const byteStr = atob(b64);
+    const ab = new ArrayBuffer(byteStr.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteStr.length; i++) ia[i] = byteStr.charCodeAt(i);
+    return URL.createObjectURL(new Blob([ab], { type: mime }));
+  } catch {
+    return null;
+  }
+}
 
 const MODELS = [
   { id: 'Xenova/whisper-tiny.en', label: 'Tiny, English (fast, rougher)' },
@@ -84,6 +117,10 @@ function createNewSection(index) {
 }
 
 export default function App() {
+  // ── Page navigation ────────────────────────────────────────────────────────
+  const [page, setPage] = useState('maker'); // 'maker' | 'studio'
+  const [studioInitialProject, setStudioInitialProject] = useState(null);
+
   const [projectTitle, setProjectTitle] = useState('My Video Project');
   const [model, setModel] = useState(MODELS[0].id);
 
@@ -480,9 +517,46 @@ export default function App() {
   };
 
   // Project Save & Load
-  const handleSaveProject = () => {
+  const handleSaveProject = async () => {
+    setSaveNotice('⏳ Serializing audio & images…');
+
+    // Serialize each section's audio and images to base64 data URLs
+    const serializedSections = await Promise.all(
+      sections.map(async (s) => {
+        // Audio
+        const audioDataUrl = s.audioUrl ? await blobUrlToDataUrl(s.audioUrl) : null;
+
+        // Generated images (AI-produced)
+        const generatedImages = {};
+        for (const [idx, imgObj] of Object.entries(s.generatedImages || {})) {
+          const dataUrl = imgObj?.url ? await blobUrlToDataUrl(imgObj.url) : null;
+          if (dataUrl) generatedImages[idx] = { ...imgObj, url: dataUrl };
+        }
+
+        // Manual images (user-replaced)
+        const manualImages = {};
+        for (const [idx, imgObj] of Object.entries(s.manualImages || {})) {
+          const dataUrl = imgObj?.url ? await blobUrlToDataUrl(imgObj.url) : null;
+          if (dataUrl) manualImages[idx] = { ...imgObj, url: dataUrl };
+        }
+
+        return {
+          id: s.id,
+          title: s.title,
+          scriptText: s.scriptText,
+          inputMode: s.inputMode,
+          slidePrompts: s.slidePrompts,
+          textOverlays: s.textOverlays,
+          slideAnimations: s.slideAnimations,
+          audioDataUrl,
+          generatedImages,
+          manualImages,
+        };
+      })
+    );
+
     const projectPayload = {
-      version: '2.0',
+      version: '2.1',
       savedAt: new Date().toISOString(),
       projectTitle,
       aspectRatio,
@@ -493,15 +567,7 @@ export default function App() {
       visualStyle,
       bgmVolume,
       autoDuck,
-      sections: sections.map((s) => ({
-        id: s.id,
-        title: s.title,
-        scriptText: s.scriptText,
-        inputMode: s.inputMode,
-        slidePrompts: s.slidePrompts,
-        textOverlays: s.textOverlays,
-        slideAnimations: s.slideAnimations,
-      })),
+      sections: serializedSections,
     };
 
     const json = JSON.stringify(projectPayload, null, 2);
@@ -514,6 +580,8 @@ export default function App() {
   const handleLoadProjectFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // Reset input so same file can be reloaded
+    e.target.value = '';
 
     try {
       const text = await file.text();
@@ -526,15 +594,40 @@ export default function App() {
       if (data.hookStyle) setHookStyle(data.hookStyle);
       if (data.imageEngine) setImageEngine(data.imageEngine);
       if (data.visualStyle) setVisualStyle(data.visualStyle);
+      if (data.bgmVolume != null) setBgmVolume(data.bgmVolume);
+      if (data.autoDuck != null) setAutoDuck(data.autoDuck);
 
       if (Array.isArray(data.sections) && data.sections.length > 0) {
-        setSections(
-          data.sections.map((s, idx) => ({
+        const restoredSections = data.sections.map((s, idx) => {
+          // Restore audio blob URL from base64 data URL
+          const audioUrl = s.audioDataUrl ? dataUrlToBlobUrl(s.audioDataUrl) : null;
+          const audio = audioUrl ? null : null; // audio Blob not restored (URL is sufficient for playback)
+
+          // Restore generated image URLs
+          const generatedImages = {};
+          for (const [imgIdx, imgObj] of Object.entries(s.generatedImages || {})) {
+            const url = imgObj?.url ? dataUrlToBlobUrl(imgObj.url) : null;
+            if (url) generatedImages[imgIdx] = { ...imgObj, url };
+          }
+
+          // Restore manual image URLs
+          const manualImages = {};
+          for (const [imgIdx, imgObj] of Object.entries(s.manualImages || {})) {
+            const url = imgObj?.url ? dataUrlToBlobUrl(imgObj.url) : null;
+            if (url) manualImages[imgIdx] = { ...imgObj, url };
+          }
+
+          return {
             ...createNewSection(idx + 1),
             ...s,
             id: s.id || `sec-${Date.now()}-${idx + 1}`,
-          }))
-        );
+            audioUrl,
+            generatedImages,
+            manualImages,
+            // duration will be recalculated when audio loads
+          };
+        });
+        setSections(restoredSections);
       }
 
       setSaveNotice('✓ Project loaded successfully!');
@@ -546,8 +639,63 @@ export default function App() {
 
   const isVertical = aspectRatio === '9:16';
 
+  // ── Open merged project in Studio ─────────────────────────────────────────
+  const handleOpenInStudio = () => {
+    if (!mergedData) return;
+    setStudioInitialProject({
+      aspectRatio,
+      duration: mergedData.duration,
+      rows: mergedData.rows,
+      slides: mergedData.slides,
+      imageUrls: mergedData.effectiveImageUrls,
+      audioUrl: mergedData.audioUrl,
+      bgmUrl: bgmUrl || null,
+      bgmVolume,
+      autoDuck,
+      animationMode,
+      captionStyle,
+      hookStyle,
+      slideAnimations: mergedData.slideAnimations || {},
+      textOverlays: mergedData.textOverlays || {},
+      layers: [],
+      transitions: {},
+    });
+    setPage('studio');
+  };
+
+  // ── Studio Page ────────────────────────────────────────────────────────────
+  if (page === 'studio') {
+    return (
+      <StudioPage
+        initialProject={studioInitialProject}
+        onBack={() => setPage('maker')}
+      />
+    );
+  }
+
   return (
     <main>
+      {/* App-level Navigation */}
+      <div className="app-nav-bar">
+        <button
+          type="button"
+          className={`app-nav-pill ${page === 'maker' ? 'active' : ''}`}
+          onClick={() => setPage('maker')}
+        >
+          🎙️ Video Maker
+        </button>
+        <button
+          type="button"
+          className={`app-nav-pill ${page === 'studio' ? 'active' : ''}`}
+          onClick={() => {
+            if (!studioInitialProject && mergedData) handleOpenInStudio();
+            else setPage('studio');
+          }}
+        >
+          🎬 Studio Editor
+        </button>
+      </div>
+
       <header>
         <div className="header-badge">Video Maker Studio Pro v2.0</div>
         <h1>Multi-Section Video Maker</h1>
@@ -904,6 +1052,14 @@ export default function App() {
                 {mergedData.rows.length} Total Slides • {fmt(mergedData.duration)} Total Duration
               </span>
             </div>
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={handleOpenInStudio}
+              title="Open this merged video in the full Studio Editor"
+            >
+              🎬 Open in Studio Editor
+            </button>
           </div>
 
           <p className="hint">
