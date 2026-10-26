@@ -220,6 +220,13 @@ export default function StudioPage({ initialProject, onBack }) {
     setProject(p => ({ ...p, ...changes }));
   }, []);
 
+  const handleUpdateRowsAndDuration = useCallback((newRows, newDuration) => {
+    updateProject({
+      rows: newRows,
+      duration: newDuration,
+    });
+  }, [updateProject]);
+
   const handleAddLayer = useCallback((layerData) => {
     const newLayer = {
       ...layerData,
@@ -648,6 +655,7 @@ export default function StudioPage({ initialProject, onBack }) {
             onSplitLayer={handleSplitLayer}
             onSetTransition={handleSetTransition}
             onOpenLeftTab={setLeftTab}
+            onUpdateRowsAndDuration={handleUpdateRowsAndDuration}
           />
         </div>
 

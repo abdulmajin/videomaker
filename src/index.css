@@ -2840,3 +2840,113 @@ tr.active-row {
 
 /* ═══════════════════════════════════════════════════════════════
 /* Pro Studio theme styles are loaded from src/studio.css */
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   VISUAL TIMELINE SLIDE TRIMMING & AUTO GAP-CLOSING (RIPPLE EDIT)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.pro-slide-block.trimming-block {
+  background: rgba(56, 189, 248, 0.22) !important;
+  outline: 2px solid #38bdf8 !important;
+  outline-offset: -2px;
+  z-index: 10;
+}
+
+/* Slide Trim Handles for Dragging Length & Auto Gap-Closing */
+.pro-slide-trim-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  cursor: ew-resize;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.pro-slide-block:hover .pro-slide-trim-handle,
+.pro-slide-block.trimming-block .pro-slide-trim-handle {
+  opacity: 1;
+}
+
+.pro-slide-trim--start {
+  left: 0;
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.4), transparent);
+}
+
+.pro-slide-trim--end {
+  right: 0;
+  background: linear-gradient(-90deg, rgba(56, 189, 248, 0.4), transparent);
+}
+
+.pro-trim-grip {
+  width: 3px;
+  height: 24px;
+  background: #38bdf8;
+  border-radius: 2px;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.85);
+  transition: transform 0.12s, background 0.12s;
+}
+
+.pro-slide-trim-handle:hover .pro-trim-grip,
+.pro-slide-block.trimming-block .pro-trim-grip {
+  background: #ffffff;
+  transform: scaleY(1.2);
+  box-shadow: 0 0 8px #38bdf8;
+}
+
+/* Floating Trim Feedback Pill */
+.pro-trim-floating-pill {
+  position: absolute;
+  top: -38px;
+  transform: translateX(-50%);
+  background: #0b1120;
+  border: 1px solid #38bdf8;
+  border-radius: 6px;
+  padding: 4px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #f8fafc;
+  pointer-events: none;
+  z-index: 120;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.8), 0 0 10px rgba(56, 189, 248, 0.4);
+  white-space: nowrap;
+}
+
+.pro-pill-title {
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.pro-pill-dur {
+  color: #ffffff;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.pro-pill-delta-pos {
+  color: #10b981;
+  font-family: monospace;
+}
+
+.pro-pill-delta-neg {
+  color: #f59e0b;
+  font-family: monospace;
+}
+
+.pro-pill-tag {
+  font-size: 9px;
+  color: #38bdf8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: rgba(56, 189, 248, 0.15);
+  padding: 1px 4px;
+  border-radius: 3px;
+}

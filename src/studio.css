@@ -1276,6 +1276,114 @@
   border-color: #38bdf8;
 }
 
+.tl-scene.trimming {
+  border-color: #38bdf8 !important;
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.6) !important;
+  z-index: 20;
+}
+
+/* Scene Trim Handles (Left & Right) */
+.tl-scene-trim {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  cursor: ew-resize;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.tl-scene:hover .tl-scene-trim,
+.tl-scene.trimming .tl-scene-trim {
+  opacity: 1;
+}
+
+.tl-scene-trim--start {
+  left: 0;
+  border-top-left-radius: 5px;
+  border-bottom-left-radius: 5px;
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.45), transparent);
+}
+
+.tl-scene-trim--end {
+  right: 0;
+  border-top-right-radius: 5px;
+  border-bottom-right-radius: 5px;
+  background: linear-gradient(-90deg, rgba(56, 189, 248, 0.45), transparent);
+}
+
+.tl-trim-grip {
+  width: 3px;
+  height: 22px;
+  background: #38bdf8;
+  border-radius: 2px;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.85);
+  transition: background 0.15s, transform 0.15s;
+}
+
+.tl-scene-trim:hover .tl-trim-grip,
+.tl-scene.trimming .tl-trim-grip {
+  background: #ffffff;
+  transform: scaleY(1.2);
+  box-shadow: 0 0 8px #38bdf8;
+}
+
+/* Floating Trim Feedback Pill (Appears above the cut boundary while dragging) */
+.tl-trim-floating-pill {
+  position: absolute;
+  top: -38px;
+  transform: translateX(-50%);
+  background: #0f172a;
+  border: 1px solid #38bdf8;
+  border-radius: 6px;
+  padding: 4px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #f8fafc;
+  pointer-events: none;
+  z-index: 100;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.8), 0 0 10px rgba(56, 189, 248, 0.4);
+  white-space: nowrap;
+}
+
+.tl-trim-floating-pill .pill-title {
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.tl-trim-floating-pill .pill-dur {
+  color: #ffffff;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.tl-trim-floating-pill .pill-delta-pos {
+  color: #10b981;
+  font-family: monospace;
+}
+
+.tl-trim-floating-pill .pill-delta-neg {
+  color: #f59e0b;
+  font-family: monospace;
+}
+
+.tl-trim-floating-pill .pill-hint {
+  font-size: 9px;
+  color: #38bdf8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: rgba(56, 189, 248, 0.15);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
 .tl-scene-badge {
   position: absolute;
   top: 2px;

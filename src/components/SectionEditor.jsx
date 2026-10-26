@@ -708,6 +708,14 @@ export default function SectionEditor({
                     else audioRef.current.pause();
                   }
                 }}
+                onUpdateRows={(newRows, newDuration) => {
+                  onUpdateSection(prev => ({
+                    ...prev,
+                    rows: newRows,
+                    duration: newDuration,
+                  }));
+                  setTimeout(() => renderCurrentPreview(currentTime), 20);
+                }}
               />
 
               {/* Section Slide Ellipse Drawer with Manual Image Replacement & Retention Hooks */}

@@ -1119,6 +1119,10 @@ export default function App() {
                 else mergedAudioRef.current.pause();
               }
             }}
+            onUpdateRows={(newRows, newDuration) => {
+              setMergedData(prev => prev ? ({ ...prev, rows: newRows, duration: newDuration }) : prev);
+              setTimeout(() => renderMergedPreview(mergedCurrentTime), 20);
+            }}
           />
 
           {/* Master Slide Ellipse Drawer with Manual Replace Option & Hooks */}

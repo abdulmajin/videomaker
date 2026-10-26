@@ -19,12 +19,16 @@ export default function VisualTimeline({
   slideAnimations = {},
   onSeek = () => {},
   onTogglePlay = () => {},
+  onUpdateRows = null,
 }) {
   const scrollViewportRef = useRef(null);
   const trackRef = useRef(null);
   const [zoomLevel, setZoomLevel] = useState(1.75); // 1.0 = fit min 100%, 1.75+ = exceeds screen width
   const [followPlayhead, setFollowPlayhead] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
+  const [trimFeedback, setTrimFeedback] = useState(null); // { index, mode, newDur, delta }
+
+  const slideTrimRef = useRef(null); // { index, mode, startX, initialRows, initialDuration, oldStart, oldEnd, oldDur, pxPerSec }
 
   // Calculate track width in pixels based on zoom level
   // Base width ensures it exceeds window width when zoom > 1
@@ -54,15 +58,94 @@ export default function VisualTimeline({
     handleSeekFromEvent(e);
   };
 
-  useEffect(() => {
-    if (!isDragging) return;
+  // ── Slide Trim Drag Start (Ripple Edit with Auto Gap-Closing) ──────────────
+  const handleSlideTrimStart = useCallback((e, index, mode) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (e.button !== 0 || !onUpdateRows) return;
 
+    const initialRows = rows.map(r => ({ ...r }));
+    const initialDuration = duration;
+    const oldStart = initialRows[index].start ?? 0;
+    const oldEnd = initialRows[index + 1] ? initialRows[index + 1].start : initialDuration;
+    const oldDur = Math.max(0.1, oldEnd - oldStart);
+
+    const pxPerSec = trackWidth / (duration || 1);
+
+    slideTrimRef.current = {
+      index,
+      mode, // 'trim-end' | 'trim-start'
+      startX: e.clientX,
+      initialRows,
+      initialDuration,
+      oldStart,
+      oldEnd,
+      oldDur,
+      pxPerSec,
+    };
+
+    setTrimFeedback({ index, mode, newDur: oldDur, delta: 0 });
+  }, [rows, duration, trackWidth, onUpdateRows]);
+
+  useEffect(() => {
     const handleMouseMove = (e) => {
-      handleSeekFromEvent(e);
+      // 1. Trimming slide with ripple edit
+      const st = slideTrimRef.current;
+      if (st) {
+        const dt = (e.clientX - st.startX) / (st.pxPerSec || 48);
+        const { index, mode, initialRows, initialDuration, oldStart, oldEnd, oldDur } = st;
+
+        if (mode === 'trim-end') {
+          // Dragging right edge forward/back -> edit slide length, subsequent slides auto close gap
+          const newDur = Math.max(0.2, Number((oldDur + dt).toFixed(2)));
+          const delta = Number((newDur - oldDur).toFixed(2));
+
+          const newRows = initialRows.map((r, k) => {
+            if (k <= index) return { ...r };
+            return {
+              ...r,
+              start: Number(Math.max(0, r.start + delta).toFixed(2)),
+            };
+          });
+
+          const newDuration = Math.max(0.5, Number((initialDuration + delta).toFixed(2)));
+
+          setTrimFeedback({ index, mode, newDur, delta });
+          onUpdateRows?.(newRows, newDuration);
+          onSeek(Number(Math.max(0, oldStart + newDur).toFixed(2)));
+        } else if (mode === 'trim-start') {
+          // Dragging left edge -> boundary adjustment with previous slide, gaps remain 0
+          const prevStart = initialRows[index - 1]?.start ?? 0;
+          const minStart = prevStart + 0.2;
+          const maxStart = oldEnd - 0.2;
+          const targetStart = Math.max(minStart, Math.min(maxStart, oldStart + dt));
+          const delta = Number((targetStart - oldStart).toFixed(2));
+          const newDur = Number((oldEnd - targetStart).toFixed(2));
+
+          const newRows = initialRows.map((r, k) => {
+            if (k === index) {
+              return { ...r, start: Number(targetStart.toFixed(2)) };
+            }
+            return { ...r };
+          });
+
+          setTrimFeedback({ index, mode, newDur, delta: -delta });
+          onUpdateRows?.(newRows, initialDuration);
+          onSeek(Number(targetStart.toFixed(2)));
+        }
+        return;
+      }
+
+      // 2. Dragging playhead seek
+      if (isDragging) {
+        handleSeekFromEvent(e);
+      }
     };
 
     const handleMouseUp = () => {
       setIsDragging(false);
+      slideTrimRef.current = null;
+      setTrimFeedback(null);
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -71,7 +154,7 @@ export default function VisualTimeline({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging, handleSeekFromEvent]);
+  }, [isDragging, handleSeekFromEvent, onUpdateRows, onSeek]);
 
   // Smoothly follow playhead when playing
   useEffect(() => {
@@ -273,18 +356,32 @@ export default function VisualTimeline({
                   overrideAnim && overrideAnim !== 'auto' ? overrideAnim : animationMode,
                   i
                 );
+                const isTrimmingThis = trimFeedback?.index === i;
 
                 return (
                   <div
                     key={row.id}
-                    className={`pro-slide-block ${isActive ? 'active-block' : ''} ${row.match < 0.5 ? 'low-match-block' : ''}`}
+                    className={`pro-slide-block ${isActive ? 'active-block' : ''} ${
+                      row.match < 0.5 ? 'low-match-block' : ''
+                    } ${isTrimmingThis ? 'trimming-block' : ''}`}
                     style={{ width: `${widthPct}%` }}
                     onClick={(e) => {
                       e.stopPropagation();
                       onSeek(row.start);
                     }}
-                    title={`Slide ${row.id}: ${fmt(row.start)} - ${fmt(nextStart)} (${slideDur.toFixed(1)}s)`}
+                    title={`Slide ${row.id}: ${fmt(row.start)} - ${fmt(nextStart)} (${slideDur.toFixed(2)}s)`}
                   >
+                    {/* Left Trim Handle (for i > 0) */}
+                    {i > 0 && onUpdateRows && (
+                      <div
+                        className="pro-slide-trim-handle pro-slide-trim--start"
+                        title="Drag left/right to trim start (auto-closes gap)"
+                        onMouseDown={(e) => handleSlideTrimStart(e, i, 'trim-start')}
+                      >
+                        <span className="pro-trim-grip" />
+                      </div>
+                    )}
+
                     <div className="pro-block-inner">
                       {imgUrl ? (
                         <img
@@ -301,9 +398,48 @@ export default function VisualTimeline({
                       </div>
                       <span className="pro-block-duration">{slideDur.toFixed(1)}s</span>
                     </div>
+
+                    {/* Right Trim Handle (ripples next slides to auto close gap) */}
+                    {onUpdateRows && (
+                      <div
+                        className="pro-slide-trim-handle pro-slide-trim--end"
+                        title="Drag forward/back to edit length (next slides auto-close gap)"
+                        onMouseDown={(e) => handleSlideTrimStart(e, i, 'trim-end')}
+                      >
+                        <span className="pro-trim-grip" />
+                      </div>
+                    )}
                   </div>
                 );
               })}
+
+              {/* Floating Trim Feedback Pill */}
+              {trimFeedback && (
+                <div
+                  className="pro-trim-floating-pill"
+                  style={{
+                    left: `${Math.min(
+                      96,
+                      Math.max(
+                        2,
+                        (((rows[trimFeedback.index]?.start ?? 0) +
+                          (trimFeedback.mode === 'trim-end' ? trimFeedback.newDur : 0)) /
+                          (duration || 1)) *
+                          100
+                      )
+                    )}%`,
+                  }}
+                >
+                  <span className="pro-pill-title">Slide {trimFeedback.index + 1}</span>
+                  <span className="pro-pill-dur">{trimFeedback.newDur.toFixed(2)}s</span>
+                  <span className={trimFeedback.delta >= 0 ? 'pro-pill-delta-pos' : 'pro-pill-delta-neg'}>
+                    {trimFeedback.delta >= 0
+                      ? `+${trimFeedback.delta.toFixed(2)}s`
+                      : `${trimFeedback.delta.toFixed(2)}s`}
+                  </span>
+                  <span className="pro-pill-tag">gap auto-closed</span>
+                </div>
+              )}
             </div>
 
             {/* Track 2: Visualized Audio Track */}

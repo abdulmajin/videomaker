@@ -80,6 +80,7 @@ export default function StudioTimeline({
   onSplitLayer,
   onSetTransition,
   onOpenLeftTab,
+  onUpdateRowsAndDuration,
 }) {
   const {
     duration = 30, rows = [], layers = [], audioUrl, bgmUrl, bgmName,
@@ -89,11 +90,13 @@ export default function StudioTimeline({
   // ── Local state ────────────────────────────────────────────────────────────
   const [zoom, setZoom] = useState(20);                 // px per second
   const [transitionMenu, setTransitionMenu] = useState(null); // { index, x, y }
+  const [trimFeedback, setTrimFeedback] = useState(null); // { index, mode, newDur, delta }
 
   // ── Refs ───────────────────────────────────────────────────────────────────
   const scrollRef    = useRef(null);
   const scrubRef     = useRef(null);  // { el } while scrubbing the ruler/track
   const blockDragRef = useRef(null);  // { layerId, mode, startX, startTime, endTime }
+  const sceneTrimRef = useRef(null);  // { index, mode, startX, initialRows, initialDuration, oldStart, oldEnd, oldDur }
 
   const timelineWidth = Math.max(1, duration * zoom);
 
@@ -163,7 +166,7 @@ export default function StudioTimeline({
     setTransitionMenu(null);
   }, [onSeek, onSelectLayer, timeFromEvent]);
 
-  // ── Block drag start ───────────────────────────────────────────────────────
+  // ── Block drag start (overlay layers) ──────────────────────────────────────
   const handleBlockMouseDown = useCallback((e, layer, mode) => {
     e.stopPropagation();
     if (e.button !== 0) return;
@@ -177,13 +180,107 @@ export default function StudioTimeline({
     onSelectLayer(layer.id);
   }, [onSelectLayer]);
 
+  // ── Scene trim start (video track slides with auto gap-closing ripple) ─────
+  const handleSceneTrimStart = useCallback((e, index, mode) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (e.button !== 0) return;
+
+    const initialRows = rows.map(r => ({ ...r }));
+    const initialDuration = duration;
+    const oldStart = initialRows[index].start ?? 0;
+    const oldEnd = initialRows[index + 1] ? initialRows[index + 1].start : initialDuration;
+    const oldDur = Math.max(0.1, oldEnd - oldStart);
+
+    sceneTrimRef.current = {
+      index,
+      mode, // 'trim-end' (right handle) | 'trim-start' (left handle)
+      startX: e.clientX,
+      initialRows,
+      initialDuration,
+      oldStart,
+      oldEnd,
+      oldDur,
+    };
+
+    setTrimFeedback({
+      index,
+      mode,
+      newDur: oldDur,
+      delta: 0,
+    });
+    onSelectLayer(null);
+  }, [rows, duration, onSelectLayer]);
+
   // ── Global mousemove / mouseup ─────────────────────────────────────────────
   useEffect(() => {
     const onMove = (e) => {
+      // 1. Scrubbing timeline ruler
       if (scrubRef.current) {
         onSeek(timeFromEvent(e, scrubRef.current.el));
         return;
       }
+
+      // 2. Scene trimming with auto gap-closing ripple
+      const st = sceneTrimRef.current;
+      if (st) {
+        const dt = (e.clientX - st.startX) / zoom;
+        const { index, mode, initialRows, initialDuration, oldStart, oldEnd, oldDur } = st;
+
+        if (mode === 'trim-end') {
+          // Dragging right edge forward/back -> edit slide length, subsequent slides auto close gap
+          const newDur = Math.max(0.2, Number((oldDur + dt).toFixed(2)));
+          const delta = Number((newDur - oldDur).toFixed(2));
+
+          const newRows = initialRows.map((r, k) => {
+            if (k <= index) return { ...r };
+            return {
+              ...r,
+              start: Number(Math.max(0, r.start + delta).toFixed(2)),
+            };
+          });
+
+          const newDuration = Math.max(0.5, Number((initialDuration + delta).toFixed(2)));
+
+          setTrimFeedback({
+            index,
+            mode,
+            newDur,
+            delta,
+          });
+
+          onUpdateRowsAndDuration?.(newRows, newDuration);
+          onSeek(Number(Math.max(0, oldStart + newDur).toFixed(2)));
+        } else if (mode === 'trim-start') {
+          // Dragging left edge -> boundary adjustment with previous slide, gaps remain 0
+          const prevStart = initialRows[index - 1]?.start ?? 0;
+          const minStart = prevStart + 0.2;
+          const maxStart = oldEnd - 0.2;
+          const targetStart = Math.max(minStart, Math.min(maxStart, oldStart + dt));
+          const delta = Number((targetStart - oldStart).toFixed(2));
+          const newDur = Number((oldEnd - targetStart).toFixed(2));
+
+          const newRows = initialRows.map((r, k) => {
+            if (k === index) {
+              return { ...r, start: Number(targetStart.toFixed(2)) };
+            }
+            return { ...r };
+          });
+
+          setTrimFeedback({
+            index,
+            mode,
+            newDur,
+            delta: -delta,
+          });
+
+          onUpdateRowsAndDuration?.(newRows, initialDuration);
+          onSeek(Number(targetStart.toFixed(2)));
+        }
+        return;
+      }
+
+      // 3. Overlay layer drag & trim
       const bd = blockDragRef.current;
       if (!bd) return;
       const dt  = (e.clientX - bd.startX) / zoom;
@@ -197,17 +294,21 @@ export default function StudioTimeline({
         onUpdateLayer(bd.layerId, { startTime: newStart, endTime: newStart + dur });
       }
     };
+
     const onUp = () => {
       scrubRef.current = null;
       blockDragRef.current = null;
+      sceneTrimRef.current = null;
+      setTrimFeedback(null);
     };
+
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
     return () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [zoom, duration, onSeek, onUpdateLayer, timeFromEvent]);
+  }, [zoom, duration, onSeek, onUpdateLayer, onUpdateRowsAndDuration, timeFromEvent]);
 
   // Close transition menu on outside click
   useEffect(() => {
@@ -366,22 +467,72 @@ export default function StudioTimeline({
                     {rows.map((row, i) => {
                       const start = row.start ?? 0;
                       const end   = rows[i + 1]?.start ?? duration;
+                      const slideDur = Math.max(0.1, end - start);
                       const url   = imageUrls[i];
+                      const isTrimmingThis = trimFeedback?.index === i;
                       return (
                         <div
                           key={row.id ?? i}
-                          className="tl-scene"
+                          className={`tl-scene${isTrimmingThis ? ' trimming' : ''}`}
                           style={{
                             left: start * zoom,
-                            width: Math.max(2, (end - start) * zoom),
+                            width: Math.max(6, slideDur * zoom),
                             backgroundImage: url ? `url("${url}")` : undefined,
                           }}
-                          title={`Scene ${i + 1}: ${(row.text || '').slice(0, 80)}`}
+                          title={`Slide ${i + 1}: ${(row.text || '').slice(0, 80)} (${slideDur.toFixed(2)}s)`}
+                          onClick={() => onSeek(start)}
                         >
-                          {(end - start) * zoom > 34 && <span className="tl-scene-badge">{i + 1}</span>}
+                          {(end - start) * zoom > 34 && (
+                            <span className="tl-scene-badge">
+                              {i + 1} · {slideDur.toFixed(1)}s
+                            </span>
+                          )}
+
+                          {/* Left Trim Handle (for i > 0, boundary with previous slide) */}
+                          {i > 0 && (
+                            <div
+                              className="tl-scene-trim tl-scene-trim--start"
+                              title="Drag left/right to trim scene start (auto-closes gap)"
+                              onMouseDown={(e) => handleSceneTrimStart(e, i, 'trim-start')}
+                            >
+                              <span className="tl-trim-grip" />
+                            </div>
+                          )}
+
+                          {/* Right Trim Handle (ripples next slides to auto-close gap) */}
+                          <div
+                            className="tl-scene-trim tl-scene-trim--end"
+                            title="Drag forward/back to edit length (subsequent slides auto-close gap)"
+                            onMouseDown={(e) => handleSceneTrimStart(e, i, 'trim-end')}
+                          >
+                            <span className="tl-trim-grip" />
+                          </div>
                         </div>
                       );
                     })}
+
+                    {/* Live floating trim feedback pill */}
+                    {trimFeedback && (
+                      <div
+                        className="tl-trim-floating-pill"
+                        style={{
+                          left: Math.max(
+                            8,
+                            (rows[trimFeedback.index]?.start ?? 0) * zoom +
+                              (trimFeedback.mode === 'trim-end' ? trimFeedback.newDur * zoom : 0)
+                          ),
+                        }}
+                      >
+                        <span className="pill-title">Slide {trimFeedback.index + 1}</span>
+                        <span className="pill-dur">{trimFeedback.newDur.toFixed(2)}s</span>
+                        <span className={trimFeedback.delta >= 0 ? 'pill-delta-pos' : 'pill-delta-neg'}>
+                          {trimFeedback.delta >= 0
+                            ? `+${trimFeedback.delta.toFixed(2)}s`
+                            : `${trimFeedback.delta.toFixed(2)}s`}
+                        </span>
+                        <span className="pill-hint">gap auto-closed</span>
+                      </div>
+                    )}
                   </div>
                 )}
                 {/* Transition diamonds at each cut */}
