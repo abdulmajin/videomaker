@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { TEXT_STYLE_PRESETS, createDefaultTextOverlay } from '../lib/renderVideo';
 
 const FONT_FAMILIES = [
