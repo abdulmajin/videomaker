@@ -282,7 +282,7 @@ ${scriptInput || 'There is a type of man who never double-texts. He doesn\'t sen
                 >
                   {sections.map((s, idx) => (
                     <option key={s.id} value={idx}>
-                      {s.title || `Section ${idx + 1}`}
+                      {s.title || (idx === 0 ? 'Intro' : `Section ${idx}`)}
                     </option>
                   ))}
                 </select>

@@ -148,11 +148,62 @@ export default function VideoTextCanvasInteractiveLayer({
     onSelectOverlay(null);
   };
 
+  // Auto-deselect when clicking empty space, outside the text box, or pressing Escape
+  useEffect(() => {
+    if (!selectedOverlayId) return;
+
+    const handleGlobalPointerDown = (e) => {
+      // Don't deselect if clicking inside:
+      // - The interactive text box or its drag handles
+      // - The floating action toolbar (Edit, Top, Center, Bottom, Delete)
+      // - The Text Overlay Editor Modal
+      // - Timeline overlay badges or card controls
+      if (
+        e.target.closest('.interactive-text-box') ||
+        e.target.closest('.interactive-floating-actions') ||
+        e.target.closest('.modal-overlay') ||
+        e.target.closest('.text-overlay-editor-modal') ||
+        e.target.closest('.timeline-text-overlay-badge') ||
+        e.target.closest('.text-overlay-card') ||
+        e.target.closest('.btn-add-text-overlay') ||
+        e.target.closest('.btn-edit-overlay')
+      ) {
+        return;
+      }
+
+      // User clicked on white/empty space or outside the text overlay
+      onSelectOverlay(null);
+    };
+
+    const handleGlobalKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        onSelectOverlay(null);
+      }
+    };
+
+    window.addEventListener('pointerdown', handleGlobalPointerDown);
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', handleGlobalPointerDown);
+      window.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  }, [selectedOverlayId, onSelectOverlay]);
+
   return (
     <div
       ref={containerRef}
       className="video-text-interactive-layer"
-      onClick={() => onSelectOverlay(null)}
+      onPointerDown={(e) => {
+        // Direct click on the empty canvas or whitespace inside the video layer
+        if (e.target === containerRef.current || e.target.classList.contains('video-text-interactive-layer')) {
+          onSelectOverlay(null);
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === containerRef.current || e.target.classList.contains('video-text-interactive-layer')) {
+          onSelectOverlay(null);
+        }
+      }}
     >
       {/* Center line snap guide indicator */}
       {showCenterGuide && <div className="interactive-center-guide-line" />}

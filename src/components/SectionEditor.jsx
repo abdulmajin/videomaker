@@ -406,7 +406,7 @@ export default function SectionEditor({
           await new Promise((r) => setTimeout(r, 1000));
         }
       }
-      setGenStatus(`🎉 Generated all ${slides.length} images for ${section.title}!`);
+      setGenStatus(`🎉 Generated all ${slides.length} images for ${displayTitle}!`);
     } catch (err) {
       setLocalError(`Generation error: ${err.message}`);
     } finally {
@@ -421,6 +421,8 @@ export default function SectionEditor({
     renderCurrentPreview(clamped);
   };
 
+  const defaultTitle = sectionIndex === 0 ? 'Intro' : `Section ${sectionIndex}`;
+  const displayTitle = section.title || defaultTitle;
   const isCollapsed = section.isCollapsed || false;
   const isAligned = Boolean(section.rows?.length);
   const isVertical = aspectRatio === '9:16';
@@ -430,16 +432,27 @@ export default function SectionEditor({
       {/* 1. Section Header & Ellipse Toggle */}
       <div className="section-editor-header">
         <div className="section-title-area">
-          <span className="section-number-pill">#{sectionIndex + 1}</span>
-          <input
-            type="text"
-            className="section-title-input"
-            value={section.title || `Section ${sectionIndex + 1}`}
-            onChange={(e) =>
-              onUpdateSection((prev) => ({ ...prev, title: e.target.value }))
-            }
-            placeholder={`Section ${sectionIndex + 1} Title...`}
-          />
+          <span className={`section-number-pill ${sectionIndex === 0 ? 'intro-pill' : ''}`}>
+            {sectionIndex === 0 ? 'Intro' : `#${sectionIndex}`}
+          </span>
+          <div className="section-title-input-wrapper">
+            <span className="section-title-edit-icon" title="Rename section">✏️</span>
+            <input
+              type="text"
+              className="section-title-input"
+              value={section.title !== undefined ? section.title : defaultTitle}
+              onChange={(e) =>
+                onUpdateSection((prev) => ({ ...prev, title: e.target.value }))
+              }
+              onBlur={(e) => {
+                if (!e.target.value.trim()) {
+                  onUpdateSection((prev) => ({ ...prev, title: defaultTitle }));
+                }
+              }}
+              placeholder={`${defaultTitle} Title...`}
+              title="Click to rename this section completely"
+            />
+          </div>
         </div>
 
         <div className="section-badges-area">
@@ -489,7 +502,7 @@ export default function SectionEditor({
           <div className="section-subblock">
             <div className="section-subblock-header">
               <label className="section-subblock-title">
-                🎙️ Voiceover Audio for {section.title}:
+                🎙️ Voiceover Audio for {displayTitle}:
               </label>
 
               <div className="voice-method-actions">
@@ -546,7 +559,7 @@ export default function SectionEditor({
           <div className="section-subblock">
             <div className="section-subblock-header">
               <label className="section-subblock-title">
-                📄 Script &amp; Slide Mapping for {section.title}:
+                📄 Script &amp; Slide Mapping for {displayTitle}:
               </label>
               <div className="input-mode-tabs compact">
                 <button
@@ -626,7 +639,7 @@ export default function SectionEditor({
                       scriptText: e.target.value,
                     }))
                   }
-                  placeholder={`Slide 1: Introduction to ${section.title}\nSlide 2: First key highlight\nSlide 3: Summary`}
+                  placeholder={`Slide 1: Introduction to ${displayTitle}\nSlide 2: First key highlight\nSlide 3: Summary`}
                 />
               </div>
             )}
@@ -660,7 +673,7 @@ export default function SectionEditor({
               disabled={isGenerating || slides.length === 0}
               onClick={handleGenerateAllSectionImages}
             >
-              {isGenerating ? '⏳ Generating…' : `✨ Generate AI Images for ${section.title}`}
+              {isGenerating ? '⏳ Generating…' : `✨ Generate AI Images for ${displayTitle}`}
             </button>
             {genStatus && <span className="status-inline">{genStatus}</span>}
           </div>
@@ -673,7 +686,7 @@ export default function SectionEditor({
               disabled={isTranscribing || !section.audio || slides.length === 0}
               onClick={handleTranscribeAndAlign}
             >
-              {isTranscribing ? '⏳ Transcribing & Aligning…' : `🎯 Transcribe & Align ${section.title}`}
+              {isTranscribing ? '⏳ Transcribing & Aligning…' : `🎯 Transcribe & Align ${displayTitle}`}
             </button>
             {transcribeStatus && <span className="status-inline">{transcribeStatus}</span>}
           </div>
@@ -684,7 +697,7 @@ export default function SectionEditor({
           {isAligned && (
             <div className="section-preview-wrapper">
               <div className="section-preview-header">
-                <h4>🎬 {section.title} - Video Preview ({aspectRatio})</h4>
+                <h4>🎬 {displayTitle} - Video Preview ({aspectRatio})</h4>
                 <span className="badge badge-info">Preview Only</span>
               </div>
 
@@ -756,7 +769,7 @@ export default function SectionEditor({
 
               {/* Section Slide Ellipse Drawer with Manual Image Replacement & Retention Hooks */}
               <SlideEllipseDrawer
-                drawerTitle={`${section.title} - Slides, Hooks & Manual Image Replacement`}
+                drawerTitle={`${displayTitle} - Slides, Hooks & Manual Image Replacement`}
                 rows={section.rows}
                 slides={slides}
                 duration={section.duration || 1}

@@ -96,10 +96,14 @@ const fmt = (s) => {
   return `${String(mins).padStart(2, '0')}:${secs.padStart(4, '0')}`;
 };
 
+export function getDefaultSectionTitle(index) {
+  return index === 0 ? 'Intro' : `Section ${index}`;
+}
+
 function createNewSection(index) {
   return {
     id: `sec-${Date.now()}-${index}`,
-    title: `Section ${index}`,
+    title: getDefaultSectionTitle(index),
     audio: null,
     audioUrl: null,
     duration: 0,
@@ -150,8 +154,8 @@ export default function App() {
   const [bgmVolume, setBgmVolume] = useState(0.15);
   const [autoDuck, setAutoDuck] = useState(true);
 
-  // Multi-Section Video Architecture State
-  const [sections, setSections] = useState(() => [createNewSection(1)]);
+  // Multi-Section Video Architecture State (starts with Intro)
+  const [sections, setSections] = useState(() => [createNewSection(0)]);
   const [mergedData, setMergedData] = useState(null);
   const [isMerging, setIsMerging] = useState(false);
   const [mergeError, setMergeError] = useState('');
@@ -207,14 +211,14 @@ export default function App() {
     }
   };
 
-  // Sections Provision: Adjust number of sections
+  // Sections Provision: Adjust number of sections (Intro, Section 1, Section 2, ..., Section 5)
   const setSectionCount = (targetCount) => {
     const count = Math.max(1, targetCount);
     setSections((prev) => {
       if (prev.length === count) return prev;
       if (prev.length < count) {
         const next = [...prev];
-        for (let i = prev.length + 1; i <= count; i++) {
+        for (let i = prev.length; i < count; i++) {
           next.push(createNewSection(i));
         }
         return next;
@@ -225,7 +229,7 @@ export default function App() {
   };
 
   const handleAddSection = () => {
-    setSections((prev) => [...prev, createNewSection(prev.length + 1)]);
+    setSections((prev) => [...prev, createNewSection(prev.length)]);
   };
 
   const handleRemoveSection = (idx) => {
@@ -638,9 +642,9 @@ export default function App() {
           }
 
           return {
-            ...createNewSection(idx + 1),
+            ...createNewSection(idx),
             ...s,
-            id: s.id || `sec-${Date.now()}-${idx + 1}`,
+            id: s.id || `sec-${Date.now()}-${idx}`,
             audioUrl,
             generatedImages,
             manualImages,
@@ -1016,7 +1020,7 @@ export default function App() {
               className={`section-count-pill ${sections.length === num ? 'active' : ''}`}
               onClick={() => setSectionCount(num)}
             >
-              {num} {num === 1 ? 'Section' : 'Sections'}
+              {num === 1 ? '1 (Intro)' : num === 6 ? '6 (Intro + 1-5)' : `${num} Sections`}
             </button>
           ))}
         </div>
