@@ -153,19 +153,27 @@ export default function VideoTextCanvasInteractiveLayer({
     if (!selectedOverlayId) return;
 
     const handleGlobalPointerDown = (e) => {
+      // If modal is open, NEVER deselect
+      if (document.querySelector('.text-editor-modal-backdrop') || document.querySelector('.text-editor-modal')) {
+        return;
+      }
+
       // Don't deselect if clicking inside:
       // - The interactive text box or its drag handles
       // - The floating action toolbar (Edit, Top, Center, Bottom, Delete)
       // - The Text Overlay Editor Modal
-      // - Timeline overlay badges or card controls
+      // - Timeline blocks, track, transport buttons
       if (
         e.target.closest('.interactive-text-box') ||
         e.target.closest('.interactive-floating-actions') ||
-        e.target.closest('.modal-overlay') ||
-        e.target.closest('.text-overlay-editor-modal') ||
-        e.target.closest('.timeline-text-overlay-badge') ||
-        e.target.closest('.text-overlay-card') ||
+        e.target.closest('.text-editor-modal-backdrop') ||
+        e.target.closest('.text-editor-modal') ||
+        e.target.closest('.timeline-text-block') ||
+        e.target.closest('.visual-timeline-container') ||
+        e.target.closest('.timeline-track') ||
         e.target.closest('.btn-add-text-overlay') ||
+        e.target.closest('.transport-add-text-btn') ||
+        e.target.closest('.text-overlays-nav-bar') ||
         e.target.closest('.btn-edit-overlay')
       ) {
         return;
@@ -177,7 +185,9 @@ export default function VideoTextCanvasInteractiveLayer({
 
     const handleGlobalKeyDown = (e) => {
       if (e.key === 'Escape') {
-        onSelectOverlay(null);
+        if (!document.querySelector('.text-editor-modal-backdrop')) {
+          onSelectOverlay(null);
+        }
       }
     };
 
@@ -227,24 +237,31 @@ export default function VideoTextCanvasInteractiveLayer({
             }}
             onDoubleClick={(e) => {
               e.stopPropagation();
-              onOpenEditor();
+              onSelectOverlay(item.id);
+              onOpenEditor(item.id);
             }}
             title="Click and drag to reposition text on screen. Double click to style."
           >
-            {/* Box Header Badge */}
-            <div className="interactive-box-label">
-              <span className="box-icon">✨</span>
-              <span className="box-text-name">{item.text || 'Text Hook'}</span>
-              <span className="box-coords-badge">
-                X:{Math.round(coords.x * 100)}% Y:{Math.round(coords.y * 100)}%
-              </span>
-            </div>
+            {/* Box Header Badge - Only show when selected */}
+            {isSelected && (
+              <div className="interactive-box-label">
+                <span className="box-icon">✨</span>
+                <span className="box-text-name">{item.text || 'Text Hook'}</span>
+                <span className="box-coords-badge">
+                  X:{Math.round(coords.x * 100)}% Y:{Math.round(coords.y * 100)}%
+                </span>
+              </div>
+            )}
 
-            {/* Corner Drag Grips */}
-            <span className="box-corner tl" />
-            <span className="box-corner tr" />
-            <span className="box-corner bl" />
-            <span className="box-corner br" />
+            {/* Corner Drag Grips - Only show when selected */}
+            {isSelected && (
+              <>
+                <span className="box-corner tl" />
+                <span className="box-corner tr" />
+                <span className="box-corner bl" />
+                <span className="box-corner br" />
+              </>
+            )}
 
             {/* Floating Action Bar when Selected */}
             {isSelected && (
@@ -256,7 +273,10 @@ export default function VideoTextCanvasInteractiveLayer({
                 <button
                   type="button"
                   className="interactive-action-btn edit"
-                  onClick={onOpenEditor}
+                  onClick={() => {
+                    onSelectOverlay(item.id);
+                    onOpenEditor(item.id);
+                  }}
                   title="Open Text Style & Decoration Editor"
                 >
                   🎨 Edit Style

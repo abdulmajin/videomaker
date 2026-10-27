@@ -1120,7 +1120,10 @@ export default function App() {
                 setMergedData((prev) => ({ ...prev, customTextOverlays: nextList }));
                 setTimeout(() => renderMergedPreview(mergedCurrentTime), 10);
               }}
-              onOpenEditor={() => setMergedTextEditorOpen(true)}
+              onOpenEditor={(targetId) => {
+                if (targetId) setSelectedMergedTextOverlayId(targetId);
+                setMergedTextEditorOpen(true);
+              }}
               isVertical={isVertical}
             />
           </div>

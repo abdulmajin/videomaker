@@ -462,7 +462,7 @@ export default function VisualTimeline({
                       onClick={(e) => {
                         e.stopPropagation();
                         onSelectTextOverlay?.(item.id);
-                        onOpenTextEditor?.();
+                        onOpenTextEditor?.(item.id);
                       }}
                       title={`"${item.text}" (${dur.toFixed(1)}s, ${start.toFixed(1)}s - ${end.toFixed(1)}s)`}
                     >

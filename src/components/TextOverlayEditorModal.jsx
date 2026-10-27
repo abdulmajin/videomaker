@@ -40,33 +40,51 @@ export default function TextOverlayEditorModal({
   isVertical = false,
 }) {
   const [animKey, setAnimKey] = useState(0);
+  const [activeId, setActiveId] = useState(() => {
+    if (selectedOverlayId && overlays.some((o) => o.id === selectedOverlayId)) {
+      return selectedOverlayId;
+    }
+    return overlays[0]?.id || null;
+  });
+
+  // Keep internal activeId pinned when selectedOverlayId changes from props or modal opens
+  useEffect(() => {
+    if (selectedOverlayId && overlays.some((o) => o.id === selectedOverlayId)) {
+      setActiveId(selectedOverlayId);
+    } else if (activeId && !overlays.some((o) => o.id === activeId) && overlays.length > 0) {
+      setActiveId(overlays[0].id);
+    }
+  }, [selectedOverlayId, overlays, isOpen]);
 
   const activeOverlay = useMemo(() => {
     if (!overlays.length) return null;
-    return overlays.find((o) => o.id === selectedOverlayId) || overlays[0];
-  }, [overlays, selectedOverlayId]);
+    return overlays.find((o) => o.id === activeId) || overlays[0];
+  }, [overlays, activeId]);
 
   if (!isOpen) return null;
 
   const updateActive = (changes) => {
     if (!activeOverlay) return;
-    const updated = overlays.map((o) => (o.id === activeOverlay.id ? { ...o, ...changes } : o));
+    const targetId = activeOverlay.id;
+    const updated = overlays.map((o) => (o.id === targetId ? { ...o, ...changes } : o));
     onChangeOverlays(updated);
   };
 
   const handleAddNew = () => {
     const newOverlay = createDefaultTextOverlay(currentTime, `TEXT HOOK #${overlays.length + 1}`);
     onChangeOverlays([...overlays, newOverlay]);
-    onSelectOverlay(newOverlay.id);
+    setActiveId(newOverlay.id);
+    onSelectOverlay?.(newOverlay.id);
   };
 
   const handleDeleteActive = () => {
     if (!activeOverlay) return;
-    const nextList = overlays.filter((o) => o.id !== activeOverlay.id);
+    const deletedId = activeOverlay.id;
+    const nextList = overlays.filter((o) => o.id !== deletedId);
     onChangeOverlays(nextList);
-    if (nextList.length > 0) {
-      onSelectOverlay(nextList[0].id);
-    }
+    const nextActiveId = nextList[0]?.id || null;
+    setActiveId(nextActiveId);
+    if (nextActiveId) onSelectOverlay?.(nextActiveId);
   };
 
   const handleApplyPreset = (preset) => {
@@ -94,6 +112,9 @@ export default function TextOverlayEditorModal({
     });
     setAnimKey((k) => k + 1);
   };
+
+  const hasBg = Boolean(activeOverlay?.bgColor && activeOverlay.bgColor !== 'transparent' && activeOverlay.bgColor !== 'none');
+  const hasBorder = Boolean(hasBg && (activeOverlay?.bgBorderWidth || 0) > 0 && activeOverlay?.bgBorderColor && activeOverlay.bgBorderColor !== 'transparent');
 
   // Compute normalized coords for live preview
   let previewX = activeOverlay?.presetPosition === 'custom' && activeOverlay?.x !== undefined ? activeOverlay.x : 0.5;
@@ -151,7 +172,8 @@ export default function TextOverlayEditorModal({
                   type="button"
                   className={`text-overlay-chip ${isSel ? 'active' : ''}`}
                   onClick={() => {
-                    onSelectOverlay(o.id);
+                    setActiveId(o.id);
+                    onSelectOverlay?.(o.id);
                     onSeek?.(o.startTime ?? 0);
                   }}
                 >
@@ -223,16 +245,10 @@ export default function TextOverlayEditorModal({
                       activeOverlay.shadowBlur && activeOverlay.shadowBlur > 0
                         ? `0 3px ${activeOverlay.shadowBlur}px ${activeOverlay.shadowColor || 'rgba(0,0,0,0.8)'}`
                         : 'none',
-                    background:
-                      activeOverlay.bgColor && activeOverlay.bgColor !== 'transparent'
-                        ? activeOverlay.bgColor
-                        : 'transparent',
-                    borderRadius: `${activeOverlay.bgRadius !== undefined ? activeOverlay.bgRadius : 10}px`,
-                    padding: `${(activeOverlay.bgPaddingY || 10) * 0.65}px ${(activeOverlay.bgPaddingX || 20) * 0.65}px`,
-                    border:
-                      activeOverlay.bgBorderColor && activeOverlay.bgBorderWidth
-                        ? `${activeOverlay.bgBorderWidth}px solid ${activeOverlay.bgBorderColor}`
-                        : 'none',
+                    background: hasBg ? activeOverlay.bgColor : 'transparent',
+                    borderRadius: hasBg ? `${activeOverlay.bgRadius !== undefined ? activeOverlay.bgRadius : 10}px` : '0px',
+                    padding: hasBg ? `${(activeOverlay.bgPaddingY || 10) * 0.65}px ${(activeOverlay.bgPaddingX || 20) * 0.65}px` : '4px 8px',
+                    border: hasBorder ? `${activeOverlay.bgBorderWidth}px solid ${activeOverlay.bgBorderColor}` : 'none',
                     textTransform: activeOverlay.textTransform || 'uppercase',
                     textAlign: activeOverlay.textAlign || 'center',
                     animationDuration: `${activeOverlay.animDuration || 0.35}s`,
@@ -556,18 +572,6 @@ export default function TextOverlayEditorModal({
                     />
                   </label>
 
-                  <label className="color-item">
-                    <span>Box Background</span>
-                    <input
-                      type="color"
-                      value={
-                        activeOverlay.bgColor?.startsWith('#')
-                          ? activeOverlay.bgColor
-                          : '#0f172a'
-                      }
-                      onChange={(e) => updateActive({ bgColor: e.target.value })}
-                    />
-                  </label>
                 </div>
 
                 <div className="two-cols-row" style={{ marginTop: '10px' }}>
@@ -593,6 +597,172 @@ export default function TextOverlayEditorModal({
                     />
                   </label>
                 </div>
+              </div>
+
+              {/* Box Background & Border Options */}
+              <div className="editor-group">
+                <div className="editor-group-title">
+                  <span>📦 Box Background & Border</span>
+                  <div className="quick-bg-toggles">
+                    <button
+                      type="button"
+                      className={`pill-toggle-btn ${!hasBg ? 'active' : ''}`}
+                      onClick={() =>
+                        updateActive({
+                          bgColor: 'transparent',
+                          bgBorderWidth: 0,
+                          bgBorderColor: 'transparent',
+                        })
+                      }
+                      title="No background or border - Just clean text"
+                    >
+                      🚫 No Background (Just Text)
+                    </button>
+                    <button
+                      type="button"
+                      className={`pill-toggle-btn ${hasBg && (activeOverlay.bgRadius || 0) < 50 ? 'active' : ''}`}
+                      onClick={() =>
+                        updateActive({
+                          bgColor:
+                            activeOverlay.bgColor && activeOverlay.bgColor !== 'transparent'
+                              ? activeOverlay.bgColor
+                              : 'rgba(0,0,0,0.85)',
+                          bgRadius: 10,
+                          bgPaddingX: 20,
+                          bgPaddingY: 10,
+                        })
+                      }
+                      title="Solid Card Box"
+                    >
+                      ⬛ Solid Card
+                    </button>
+                    <button
+                      type="button"
+                      className={`pill-toggle-btn ${hasBg && (activeOverlay.bgRadius || 0) >= 50 ? 'active' : ''}`}
+                      onClick={() =>
+                        updateActive({
+                          bgColor:
+                            activeOverlay.bgColor && activeOverlay.bgColor !== 'transparent'
+                              ? activeOverlay.bgColor
+                              : 'rgba(15,23,42,0.92)',
+                          bgRadius: 999,
+                          bgPaddingX: 24,
+                          bgPaddingY: 12,
+                        })
+                      }
+                      title="Rounded Pill Capsule"
+                    >
+                      💊 Pill Capsule
+                    </button>
+                  </div>
+                </div>
+
+                {hasBg ? (
+                  <div className="bg-settings-expanded">
+                    <div className="color-pickers-row">
+                      <label className="color-item">
+                        <span>Background Color</span>
+                        <input
+                          type="color"
+                          value={
+                            activeOverlay.bgColor?.startsWith('#')
+                              ? activeOverlay.bgColor
+                              : '#0f172a'
+                          }
+                          onChange={(e) => updateActive({ bgColor: e.target.value })}
+                        />
+                      </label>
+
+                      <label className="color-item">
+                        <span>Border Color</span>
+                        <input
+                          type="color"
+                          value={
+                            activeOverlay.bgBorderColor?.startsWith('#')
+                              ? activeOverlay.bgBorderColor
+                              : '#38bdf8'
+                          }
+                          onChange={(e) => updateActive({ bgBorderColor: e.target.value })}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="two-cols-row" style={{ marginTop: '10px' }}>
+                      <label className="field-group">
+                        <div className="field-label-row">
+                          <span>Border Width: {activeOverlay.bgBorderWidth || 0}px</span>
+                          <button
+                            type="button"
+                            className="text-link-mini"
+                            onClick={() =>
+                              updateActive({ bgBorderWidth: 0, bgBorderColor: 'transparent' })
+                            }
+                            title="Remove border completely"
+                          >
+                            Remove Border (0px)
+                          </button>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="8"
+                          value={activeOverlay.bgBorderWidth || 0}
+                          onChange={(e) => {
+                            const bw = parseInt(e.target.value, 10);
+                            updateActive({
+                              bgBorderWidth: bw,
+                              bgBorderColor:
+                                bw > 0 &&
+                                (!activeOverlay.bgBorderColor ||
+                                  activeOverlay.bgBorderColor === 'transparent')
+                                  ? '#38bdf8'
+                                  : activeOverlay.bgBorderColor,
+                            });
+                          }}
+                        />
+                      </label>
+
+                      <label className="field-group">
+                        <span>Corner Radius: {activeOverlay.bgRadius ?? 10}px</span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="40"
+                          value={activeOverlay.bgRadius ?? 10}
+                          onChange={(e) => updateActive({ bgRadius: parseInt(e.target.value, 10) })}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="two-cols-row" style={{ marginTop: '8px' }}>
+                      <label className="field-group">
+                        <span>Horizontal Padding: {activeOverlay.bgPaddingX ?? 20}px</span>
+                        <input
+                          type="range"
+                          min="6"
+                          max="48"
+                          value={activeOverlay.bgPaddingX ?? 20}
+                          onChange={(e) => updateActive({ bgPaddingX: parseInt(e.target.value, 10) })}
+                        />
+                      </label>
+
+                      <label className="field-group">
+                        <span>Vertical Padding: {activeOverlay.bgPaddingY ?? 10}px</span>
+                        <input
+                          type="range"
+                          min="4"
+                          max="28"
+                          value={activeOverlay.bgPaddingY ?? 10}
+                          onChange={(e) => updateActive({ bgPaddingY: parseInt(e.target.value, 10) })}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="no-bg-info-badge">
+                    <span>✨ No Background: Text renders cleanly directly over the video with zero box or border.</span>
+                  </div>
+                )}
               </div>
 
               {/* Entrance Animation */}

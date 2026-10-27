@@ -3697,7 +3697,7 @@ tr.active-row {
   position: absolute;
   transform: translate(-50%, -50%);
   pointer-events: auto;
-  cursor: grab;
+  cursor: pointer;
   user-select: none;
   border-radius: 8px;
   padding: 6px 14px;
@@ -3707,7 +3707,7 @@ tr.active-row {
   align-items: center;
   justify-content: center;
   transition: outline 0.12s, box-shadow 0.12s;
-  outline: 1.5px dashed rgba(255, 255, 255, 0.25);
+  outline: none; /* No border by default - just clean text */
 }
 
 .interactive-text-box:hover {
@@ -4046,4 +4046,74 @@ tr.active-row {
   background: #0284c7;
   border-color: #38bdf8;
   color: #fff;
+}
+
+
+/* Quick Background & Border Controls */
+.quick-bg-toggles {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pill-toggle-btn {
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  color: #94a3b8;
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.pill-toggle-btn:hover {
+  background: #1e293b;
+  color: #f8fafc;
+  border-color: #38bdf8;
+}
+
+.pill-toggle-btn.active {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: #38bdf8;
+  color: #38bdf8;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
+}
+
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.text-link-mini {
+  background: none;
+  border: none;
+  color: #f87171;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  transition: color 0.15s;
+}
+
+.text-link-mini:hover {
+  color: #ef4444;
+}
+
+.no-bg-info-badge {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px dashed rgba(56, 189, 248, 0.3);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 0.8rem;
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
 }

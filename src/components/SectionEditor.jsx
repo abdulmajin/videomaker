@@ -719,7 +719,10 @@ export default function SectionEditor({
                     onUpdateSection((prev) => ({ ...prev, customTextOverlays: nextList }));
                     setTimeout(() => renderCurrentPreview(currentTime), 10);
                   }}
-                  onOpenEditor={() => setTextEditorOpen(true)}
+                  onOpenEditor={(targetId) => {
+                    if (targetId) setSelectedTextOverlayId(targetId);
+                    setTextEditorOpen(true);
+                  }}
                   isVertical={isVertical}
                 />
               </div>
@@ -752,7 +755,10 @@ export default function SectionEditor({
                 customTextOverlays={section.customTextOverlays || []}
                 selectedTextOverlayId={selectedTextOverlayId}
                 onSelectTextOverlay={setSelectedTextOverlayId}
-                onOpenTextEditor={() => setTextEditorOpen(true)}
+                onOpenTextEditor={(targetId) => {
+                  if (targetId) setSelectedTextOverlayId(targetId);
+                  setTextEditorOpen(true);
+                }}
                 onAddTextOverlay={(t) => {
                   const newO = createDefaultTextOverlay(t, `HOOK #${(section.customTextOverlays?.length || 0) + 1}`);
                   const nextList = [...(section.customTextOverlays || []), newO];

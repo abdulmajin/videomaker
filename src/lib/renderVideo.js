@@ -20,6 +20,30 @@ export const HOOK_STYLES = [
 
 export const TEXT_STYLE_PRESETS = [
   {
+    id: 'clean-text-only',
+    name: '✨ Pure Text (No Box / No Border)',
+    description: 'Crisp bold viral text with outline stroke and no background box or border',
+    fontFamily: 'Impact',
+    fontSize: 48,
+    fontWeight: '900',
+    color: '#ffffff',
+    strokeColor: '#000000',
+    strokeWidth: 5,
+    shadowColor: 'rgba(0,0,0,0.85)',
+    shadowBlur: 14,
+    shadowOffsetY: 4,
+    bgColor: 'transparent',
+    bgRadius: 0,
+    bgPaddingX: 0,
+    bgPaddingY: 0,
+    bgBorderColor: 'transparent',
+    bgBorderWidth: 0,
+    textTransform: 'uppercase',
+    animation: 'pop',
+    animDuration: 0.35,
+    presetPosition: 'center',
+  },
+  {
     id: 'punch-stamp',
     name: '💥 Viral Punch',
     description: 'TikTok / Reels Hook: Bold yellow, thick black stroke & pop',
@@ -556,8 +580,10 @@ function drawCustomTimelineTextOverlays(ctx, { width, height, time, isVertical, 
     const boxH = totalTextH + padY * 2;
     const radius = Math.min(item.bgRadius !== undefined ? item.bgRadius : 12, boxH / 2);
 
+    const hasBg = item.bgColor && item.bgColor !== 'transparent' && item.bgColor !== 'none';
+
     // Draw Background Box / Pill
-    if (item.bgColor && item.bgColor !== 'transparent') {
+    if (hasBg) {
       ctx.fillStyle = item.bgColor;
       if (item.shadowColor && item.shadowBlur) {
         ctx.shadowColor = item.shadowColor;
@@ -567,7 +593,7 @@ function drawCustomTimelineTextOverlays(ctx, { width, height, time, isVertical, 
       drawRoundedRect(ctx, -boxW / 2, -boxH / 2, boxW, boxH, radius);
       ctx.fill();
 
-      if (item.bgBorderColor && (item.bgBorderWidth || 0) > 0) {
+      if (item.bgBorderColor && item.bgBorderColor !== 'transparent' && (item.bgBorderWidth || 0) > 0) {
         ctx.strokeStyle = item.bgBorderColor;
         ctx.lineWidth = (item.bgBorderWidth || 1) * scaleFactor;
         ctx.stroke();
@@ -575,11 +601,11 @@ function drawCustomTimelineTextOverlays(ctx, { width, height, time, isVertical, 
     }
 
     // Draw Glow / Drop Shadow on Text
-    if (!item.bgColor && item.shadowColor && item.shadowBlur) {
+    if (!hasBg && item.shadowColor && item.shadowBlur) {
       ctx.shadowColor = item.shadowColor;
       ctx.shadowBlur = item.shadowBlur * scaleFactor;
       ctx.shadowOffsetY = (item.shadowOffsetY || 4) * scaleFactor;
-    } else if (item.bgColor) {
+    } else {
       ctx.shadowColor = 'transparent';
       ctx.shadowBlur = 0;
     }
