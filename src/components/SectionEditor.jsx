@@ -9,6 +9,7 @@ import { synthesizeSpeechToWav, startMicrophoneRecording } from '../lib/tts';
 import VisualTimeline from './VisualTimeline';
 import SlideEllipseDrawer from './SlideEllipseDrawer';
 import TextOverlayEditorModal from './TextOverlayEditorModal';
+import VideoTextCanvasInteractiveLayer from './VideoTextCanvasInteractiveLayer';
 
 const fmt = (s) => {
   if (isNaN(s) || s < 0) s = 0;
@@ -694,6 +695,20 @@ export default function SectionEditor({
                   height={isVertical ? 1280 : 720}
                   className={`preview-canvas ${isVertical ? 'vertical-canvas' : ''}`}
                 />
+                {/* Direct On-Screen Click & Drag Interaction Layer */}
+                <VideoTextCanvasInteractiveLayer
+                  canvasRef={canvasRef}
+                  currentTime={currentTime}
+                  overlays={section.customTextOverlays || []}
+                  selectedOverlayId={selectedTextOverlayId}
+                  onSelectOverlay={setSelectedTextOverlayId}
+                  onUpdateOverlays={(nextList) => {
+                    onUpdateSection((prev) => ({ ...prev, customTextOverlays: nextList }));
+                    setTimeout(() => renderCurrentPreview(currentTime), 10);
+                  }}
+                  onOpenEditor={() => setTextEditorOpen(true)}
+                  isVertical={isVertical}
+                />
               </div>
 
               {/* Section Timeline */}
@@ -807,6 +822,7 @@ export default function SectionEditor({
                 selectedOverlayId={selectedTextOverlayId}
                 onSelectOverlay={setSelectedTextOverlayId}
                 onSeek={handleSeek}
+                isVertical={isVertical}
               />
             </div>
           )}

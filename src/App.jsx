@@ -27,6 +27,7 @@ import SlideEllipseDrawer from './components/SlideEllipseDrawer';
 import ImagePreviewModal from './components/ImagePreviewModal';
 import MasterPromptModal from './components/MasterPromptModal';
 import TextOverlayEditorModal from './components/TextOverlayEditorModal';
+import VideoTextCanvasInteractiveLayer from './components/VideoTextCanvasInteractiveLayer';
 import StudioPage from './pages/StudioPage';
 
 // ─── Helpers: blob URL ↔ base64 data URL (for project save/restore) ──────────
@@ -1104,6 +1105,20 @@ export default function App() {
               height={isVertical ? 1280 : 720}
               className={`preview-canvas ${isVertical ? 'vertical-canvas' : ''}`}
             />
+            {/* Direct On-Screen Click & Drag Interaction Layer */}
+            <VideoTextCanvasInteractiveLayer
+              canvasRef={mergedCanvasRef}
+              currentTime={mergedCurrentTime}
+              overlays={mergedData.customTextOverlays || []}
+              selectedOverlayId={selectedMergedTextOverlayId}
+              onSelectOverlay={setSelectedMergedTextOverlayId}
+              onUpdateOverlays={(nextList) => {
+                setMergedData((prev) => ({ ...prev, customTextOverlays: nextList }));
+                setTimeout(() => renderMergedPreview(mergedCurrentTime), 10);
+              }}
+              onOpenEditor={() => setMergedTextEditorOpen(true)}
+              isVertical={isVertical}
+            />
           </div>
 
           {/* Hidden Audio Players for Merged Playback */}
@@ -1231,6 +1246,7 @@ export default function App() {
             selectedOverlayId={selectedMergedTextOverlayId}
             onSelectOverlay={setSelectedMergedTextOverlayId}
             onSeek={handleMergedSeek}
+            isVertical={isVertical}
           />
 
           {/* Master Export Controls */}

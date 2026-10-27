@@ -37,7 +37,10 @@ export default function TextOverlayEditorModal({
   selectedOverlayId,
   onSelectOverlay,
   onSeek,
+  isVertical = false,
 }) {
+  const [animKey, setAnimKey] = useState(0);
+
   const activeOverlay = useMemo(() => {
     if (!overlays.length) return null;
     return overlays.find((o) => o.id === selectedOverlayId) || overlays[0];
@@ -88,6 +91,34 @@ export default function TextOverlayEditorModal({
       animation: preset.animation,
       animDuration: preset.animDuration,
       presetPosition: preset.presetPosition || activeOverlay.presetPosition,
+    });
+    setAnimKey((k) => k + 1);
+  };
+
+  // Compute normalized coords for live preview
+  let previewX = activeOverlay?.presetPosition === 'custom' && activeOverlay?.x !== undefined ? activeOverlay.x : 0.5;
+  let previewY = 0.5;
+  if (activeOverlay?.presetPosition === 'top') {
+    previewY = isVertical ? 0.12 : 0.10;
+  } else if (activeOverlay?.presetPosition === 'center') {
+    previewY = isVertical ? 0.44 : 0.42;
+  } else if (activeOverlay?.presetPosition === 'lower-third') {
+    previewY = isVertical ? 0.72 : 0.68;
+  } else if (activeOverlay?.presetPosition === 'bottom') {
+    previewY = isVertical ? 0.84 : 0.82;
+  } else if (activeOverlay?.presetPosition === 'custom' && activeOverlay?.y !== undefined) {
+    previewY = activeOverlay.y;
+  }
+
+  // Handle click on the live preview screen to position text
+  const handleStageClick = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = Math.max(0.08, Math.min(0.92, (e.clientX - rect.left) / rect.width));
+    const clickY = Math.max(0.08, Math.min(0.92, (e.clientY - rect.top) / rect.height));
+    updateActive({
+      presetPosition: 'custom',
+      x: Number(clickX.toFixed(3)),
+      y: Number(clickY.toFixed(3)),
     });
   };
 
@@ -147,6 +178,137 @@ export default function TextOverlayEditorModal({
         {/* Modal Body */}
         {activeOverlay ? (
           <div className="text-editor-body">
+            {/* ── TOP: Live Decoration Preview Screen Before Done & Apply ── */}
+            <div className="modal-live-preview-section">
+              <div className="modal-preview-header">
+                <span className="preview-tag">
+                  📺 Live Decoration & Placement Preview (Click anywhere on screen to reposition)
+                </span>
+                <button
+                  type="button"
+                  className="replay-anim-btn"
+                  onClick={() => setAnimKey((k) => k + 1)}
+                  title="Replay entrance kinetic animation"
+                >
+                  🔄 Replay Animation
+                </button>
+              </div>
+
+              {/* Simulated Slide Canvas Stage */}
+              <div
+                className={`modal-preview-stage ${isVertical ? 'vertical-stage' : ''}`}
+                onClick={handleStageClick}
+                title="Click anywhere to reposition text on slide"
+              >
+                {/* Background Grid Pattern & Aspect Indicator */}
+                <div className="stage-aspect-indicator">{isVertical ? '9:16 Story / Reel' : '16:9 Landscape'}</div>
+                <div className="stage-center-guideline" />
+
+                {/* Rendered Animated Decorated Text Overlay */}
+                <div
+                  key={animKey}
+                  className={`modal-preview-rendered-text anim-${activeOverlay.animation || 'bounce'}`}
+                  style={{
+                    left: `${previewX * 100}%`,
+                    top: `${previewY * 100}%`,
+                    fontFamily: `${activeOverlay.fontFamily || 'Impact'}, sans-serif`,
+                    fontSize: `${Math.round((activeOverlay.fontSize || 44) * 0.65)}px`,
+                    fontWeight: activeOverlay.fontWeight || '800',
+                    color: activeOverlay.color || '#ffffff',
+                    WebkitTextStroke:
+                      activeOverlay.strokeWidth && activeOverlay.strokeWidth > 0
+                        ? `${Math.max(1, Math.round(activeOverlay.strokeWidth * 0.6))}px ${activeOverlay.strokeColor || '#000'}`
+                        : 'none',
+                    textShadow:
+                      activeOverlay.shadowBlur && activeOverlay.shadowBlur > 0
+                        ? `0 3px ${activeOverlay.shadowBlur}px ${activeOverlay.shadowColor || 'rgba(0,0,0,0.8)'}`
+                        : 'none',
+                    background:
+                      activeOverlay.bgColor && activeOverlay.bgColor !== 'transparent'
+                        ? activeOverlay.bgColor
+                        : 'transparent',
+                    borderRadius: `${activeOverlay.bgRadius !== undefined ? activeOverlay.bgRadius : 10}px`,
+                    padding: `${(activeOverlay.bgPaddingY || 10) * 0.65}px ${(activeOverlay.bgPaddingX || 20) * 0.65}px`,
+                    border:
+                      activeOverlay.bgBorderColor && activeOverlay.bgBorderWidth
+                        ? `${activeOverlay.bgBorderWidth}px solid ${activeOverlay.bgBorderColor}`
+                        : 'none',
+                    textTransform: activeOverlay.textTransform || 'uppercase',
+                    textAlign: activeOverlay.textAlign || 'center',
+                    animationDuration: `${activeOverlay.animDuration || 0.35}s`,
+                  }}
+                >
+                  {activeOverlay.text || 'YOUR TEXT HERE'}
+                </div>
+              </div>
+
+              {/* Position Alignment Quick Action Bar */}
+              <div className="preview-alignment-bar">
+                <span className="alignment-label">📐 Quick Align:</span>
+                <div className="alignment-btn-group">
+                  <button
+                    type="button"
+                    className="align-tool-btn"
+                    onClick={() => updateActive({ presetPosition: 'custom', x: 0.18 })}
+                    title="Align Left"
+                  >
+                    ⇤ Left
+                  </button>
+                  <button
+                    type="button"
+                    className="align-tool-btn"
+                    onClick={() => updateActive({ presetPosition: 'custom', x: 0.5 })}
+                    title="Center Horizontally"
+                  >
+                    ↔ Center
+                  </button>
+                  <button
+                    type="button"
+                    className="align-tool-btn"
+                    onClick={() => updateActive({ presetPosition: 'custom', x: 0.82 })}
+                    title="Align Right"
+                  >
+                    ⇥ Right
+                  </button>
+                </div>
+
+                <div className="alignment-btn-group">
+                  <button
+                    type="button"
+                    className="align-tool-btn"
+                    onClick={() => updateActive({ presetPosition: 'top', y: isVertical ? 0.12 : 0.10, x: 0.5 })}
+                    title="Top Banner"
+                  >
+                    🔝 Top
+                  </button>
+                  <button
+                    type="button"
+                    className="align-tool-btn"
+                    onClick={() => updateActive({ presetPosition: 'center', y: isVertical ? 0.44 : 0.42, x: 0.5 })}
+                    title="Center Hook"
+                  >
+                    🎯 Middle
+                  </button>
+                  <button
+                    type="button"
+                    className="align-tool-btn"
+                    onClick={() => updateActive({ presetPosition: 'lower-third', y: isVertical ? 0.72 : 0.68, x: 0.5 })}
+                    title="Lower Third"
+                  >
+                    📌 Lower-3rd
+                  </button>
+                  <button
+                    type="button"
+                    className="align-tool-btn"
+                    onClick={() => updateActive({ presetPosition: 'bottom', y: isVertical ? 0.84 : 0.82, x: 0.5 })}
+                    title="Bottom Subtitle"
+                  >
+                    ⬇️ Bottom
+                  </button>
+                </div>
+              </div>
+            </div>
+
             {/* Left Column: Text & Presets */}
             <div className="text-editor-left-col">
               <div className="editor-group">
