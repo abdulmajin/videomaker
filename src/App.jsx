@@ -29,6 +29,9 @@ import MasterPromptModal from './components/MasterPromptModal';
 import TextOverlayEditorModal from './components/TextOverlayEditorModal';
 import VideoTextCanvasInteractiveLayer from './components/VideoTextCanvasInteractiveLayer';
 import StudioPage from './pages/StudioPage';
+import RecoveryBanner, { autosaveLabel } from './components/RecoveryBanner';
+import { getSnapshotInfo, loadSnapshot, deleteSnapshot } from './lib/autosave';
+import { useAutosave } from './lib/useAutosave';
 
 // ─── Helpers: blob URL ↔ base64 data URL (for project save/restore) ──────────
 async function blobUrlToDataUrl(url) {
@@ -186,6 +189,99 @@ export default function App() {
   const preloadedMergedImagesRef = useRef([]);
   const abortControllerRef = useRef(null);
   const loadFileInputRef = useRef(null);
+
+  // ── Autosave & crash recovery (IndexedDB) ──────────────────────────────────
+  // 'checking' → looking for a snapshot; 'prompt' → asking the user; 'ready' → autosaving
+  const [recovery, setRecovery] = useState({ phase: 'checking', info: null, busy: false });
+
+  useEffect(() => {
+    getSnapshotInfo('maker')
+      .then((info) => setRecovery({ phase: info?.meta?.hasContent ? 'prompt' : 'ready', info, busy: false }))
+      .catch((err) => {
+        console.warn('Autosave unavailable:', err);
+        setRecovery({ phase: 'unavailable', info: null, busy: false });
+      });
+  }, []);
+
+  // Derived fields (slides, effectiveImageUrls) are rebuilt by SectionEditor, and
+  // blob URLs that just point at a stored File are recreated on restore.
+  const makerSnapshot = useMemo(() => ({
+    projectTitle, model, aspectRatio, imageEngine, visualStyle,
+    animationMode, captionStyle, hookStyle, resolution,
+    bgmFile, bgmUrl: bgmFile ? null : bgmUrl, bgmVolume, autoDuck,
+    sections: sections.map(({ slides, effectiveImageUrls, ...s }) => ({
+      ...s,
+      audioUrl: s.audio ? null : s.audioUrl,
+    })),
+    mergedData: mergedData ? { ...mergedData, audioFile: null } : null,
+  }), [projectTitle, model, aspectRatio, imageEngine, visualStyle, animationMode, captionStyle,
+    hookStyle, resolution, bgmFile, bgmUrl, bgmVolume, autoDuck, sections, mergedData]);
+
+  const makerAutosave = useAutosave({
+    key: 'maker',
+    data: makerSnapshot,
+    meta: {
+      title: projectTitle,
+      sectionCount: sections.length,
+      // An untouched default project isn't worth a recovery prompt
+      hasContent: projectTitle !== 'My Video Project' || !!bgmFile || !!mergedData || sections.some((s) =>
+        s.scriptText || s.audio || s.audioUrl || s.images?.length || s.customTextOverlays?.length
+        || Object.keys(s.generatedImages || {}).length || Object.keys(s.manualImages || {}).length),
+    },
+    enabled: recovery.phase === 'ready',
+  });
+
+  const handleRestoreAutosave = async () => {
+    setRecovery((r) => ({ ...r, busy: true }));
+    try {
+      const snap = await loadSnapshot('maker');
+      const d = snap?.data;
+      if (d) {
+        if (d.projectTitle) setProjectTitle(d.projectTitle);
+        if (d.model) setModel(d.model);
+        if (d.aspectRatio) setAspectRatio(d.aspectRatio);
+        if (d.imageEngine) setImageEngine(d.imageEngine);
+        if (d.visualStyle) setVisualStyle(d.visualStyle);
+        if (d.animationMode) setAnimationMode(d.animationMode);
+        if (d.captionStyle) setCaptionStyle(d.captionStyle);
+        if (d.hookStyle) setHookStyle(d.hookStyle);
+        if (d.resolution) setResolution(d.resolution);
+        if (d.bgmVolume != null) setBgmVolume(d.bgmVolume);
+        if (d.autoDuck != null) setAutoDuck(d.autoDuck);
+        if (d.bgmFile) {
+          setBgmFile(d.bgmFile);
+          setBgmUrl(URL.createObjectURL(d.bgmFile));
+        } else if (d.bgmUrl) {
+          setBgmUrl(d.bgmUrl);
+        }
+        if (Array.isArray(d.sections) && d.sections.length > 0) {
+          setSections(d.sections.map((s, idx) => ({
+            ...createNewSection(idx),
+            ...s,
+            images: (s.images || []).filter(Boolean),
+            audioUrl: s.audio ? URL.createObjectURL(s.audio) : s.audioUrl,
+          })));
+        }
+        if (d.mergedData?.audioUrl) {
+          const audioFile = await (await fetch(d.mergedData.audioUrl)).blob();
+          setMergedData({ ...d.mergedData, audioFile });
+        }
+      }
+      setRecovery({ phase: 'ready', info: null, busy: false });
+      setSaveNotice('✓ Restored your autosaved project');
+      setTimeout(() => setSaveNotice(''), 3000);
+    } catch (err) {
+      console.error('Restore failed:', err);
+      setRecovery((r) => ({ ...r, busy: false }));
+      alert(`Could not restore the autosaved project: ${err.message}`);
+    }
+  };
+
+  const handleDiscardAutosave = async () => {
+    setRecovery((r) => ({ ...r, busy: true }));
+    await deleteSnapshot('maker').catch((err) => console.warn('Discard failed:', err));
+    setRecovery({ phase: 'ready', info: null, busy: false });
+  };
 
   // Save API key
   const handleApiKeyChange = (val) => {
@@ -683,6 +779,9 @@ export default function App() {
       textOverlays: mergedData.textOverlays || {},
       layers: [],
       transitions: {},
+      // Identifies this hand-off so Studio can tell "returning to the same
+      // session" (restore its autosave silently) from "opened a new project".
+      _openedAt: Date.now(),
     });
     setPage('studio');
   };
@@ -780,9 +879,22 @@ export default function App() {
               style={{ display: 'none' }}
               onChange={handleLoadProjectFile}
             />
+            {autosaveLabel(makerAutosave) && (
+              <span className="autosave-hint">{autosaveLabel(makerAutosave)}</span>
+            )}
           </div>
         </div>
 
+        {recovery.phase === 'prompt' && (
+          <RecoveryBanner
+            what="project"
+            detail={[recovery.info?.meta?.title, recovery.info?.meta?.sectionCount && `${recovery.info.meta.sectionCount} section(s)`].filter(Boolean).join(' · ')}
+            savedAt={recovery.info?.savedAt}
+            busy={recovery.busy}
+            onRestore={handleRestoreAutosave}
+            onDiscard={handleDiscardAutosave}
+          />
+        )}
         {saveNotice && <div className="status-banner">{saveNotice}</div>}
       </header>
 

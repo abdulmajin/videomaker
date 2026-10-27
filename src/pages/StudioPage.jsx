@@ -7,6 +7,9 @@ import { Icon } from '../components/studio/icons';
 import { preloadImages } from '../lib/renderVideo';
 import { drawStudioFrame, preloadLayerImages } from '../lib/studioRender';
 import { exportStudioVideo } from '../lib/studioExport';
+import { getSnapshotInfo, loadSnapshot, deleteSnapshot } from '../lib/autosave';
+import { useAutosave } from '../lib/useAutosave';
+import RecoveryBanner, { autosaveLabel } from '../components/RecoveryBanner';
 
 const DEFAULT_PROJECT = {
   name: 'Untitled project',
@@ -133,6 +136,74 @@ export default function StudioPage({ initialProject, onBack }) {
       historyRef.current = { past: [], future: [], last: null, skip: false };
     }
   }, [initialProject]);
+
+  // ── Autosave & crash recovery (IndexedDB) ──────────────────────────────────
+  // Coming back to the same hand-off from the Maker (or opening Studio empty)
+  // restores the autosave silently; opening a different project asks first.
+  const sessionKey = initialProject?._openedAt ?? null;
+  const [recovery, setRecovery] = useState({ phase: 'checking', info: null, busy: false });
+
+  const applySnapshot = useCallback(async () => {
+    const snap = await loadSnapshot('studio');
+    if (snap?.data) {
+      setProject(buildProject(snap.data));
+      historyRef.current = { past: [], future: [], last: null, skip: false };
+      setHistoryTick(t => t + 1);
+      setSelectedLayerId(null);
+    }
+    return snap;
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSnapshotInfo('studio')
+      .then(async (info) => {
+        if (cancelled) return;
+        if (!info) { setRecovery({ phase: 'ready', info: null, busy: false }); return; }
+        const silent = !initialProject || info.meta?.sessionKey === sessionKey;
+        if (!silent) { setRecovery({ phase: 'prompt', info, busy: false }); return; }
+        await applySnapshot();
+        if (cancelled) return;
+        setRecovery({ phase: 'ready', info: null, busy: false });
+        if (!initialProject) {
+          setSaveNotice('✓ Restored autosaved session');
+          setTimeout(() => setSaveNotice(''), 3000);
+        }
+      })
+      .catch((err) => {
+        console.warn('Studio autosave unavailable:', err);
+        if (!cancelled) setRecovery({ phase: 'unavailable', info: null, busy: false });
+      });
+    return () => { cancelled = true; };
+  }, [sessionKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const studioAutosave = useAutosave({
+    key: 'studio',
+    data: project,
+    meta: { sessionKey, name: project.name, layerCount: project.layers.length },
+    enabled: recovery.phase === 'ready',
+  });
+
+  const handleRestoreAutosave = async () => {
+    setRecovery(r => ({ ...r, busy: true }));
+    try {
+      await applySnapshot();
+      setRecovery({ phase: 'ready', info: null, busy: false });
+      setSaveNotice('✓ Restored autosaved session');
+      setTimeout(() => setSaveNotice(''), 3000);
+    } catch (err) {
+      console.error('Studio restore failed:', err);
+      setRecovery(r => ({ ...r, busy: false }));
+      setSaveNotice('⚠ Could not restore autosave');
+      setTimeout(() => setSaveNotice(''), 3000);
+    }
+  };
+
+  const handleDiscardAutosave = async () => {
+    setRecovery(r => ({ ...r, busy: true }));
+    await deleteSnapshot('studio').catch(err => console.warn('Discard failed:', err));
+    setRecovery({ phase: 'ready', info: null, busy: false });
+  };
 
   // Preload slide images
   useEffect(() => {
@@ -555,6 +626,7 @@ export default function StudioPage({ initialProject, onBack }) {
           {saveNotice
             ? <span className="save-notice">{saveNotice}</span>
             : <span className="cs-saved-hint"><Icon name="layers" size={14} /> {project.layers.length} layer{project.layers.length === 1 ? '' : 's'}</span>}
+          {autosaveLabel(studioAutosave) && <span className="autosave-hint">{autosaveLabel(studioAutosave)}</span>}
           <input
             ref={loadFileInputRef}
             type="file"
@@ -581,6 +653,17 @@ export default function StudioPage({ initialProject, onBack }) {
           </button>
         </div>
       </header>
+
+      {recovery.phase === 'prompt' && (
+        <RecoveryBanner
+          what="Studio session"
+          detail={[recovery.info?.meta?.name, `${recovery.info?.meta?.layerCount ?? 0} layer(s)`].filter(Boolean).join(' · ')}
+          savedAt={recovery.info?.savedAt}
+          busy={recovery.busy}
+          onRestore={handleRestoreAutosave}
+          onDiscard={handleDiscardAutosave}
+        />
+      )}
 
       {/* ── MAIN BODY ── */}
       <div className="studio-body">
