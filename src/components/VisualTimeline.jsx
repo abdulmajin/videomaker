@@ -17,9 +17,15 @@ export default function VisualTimeline({
   imageUrls = [],
   animationMode = 'random',
   slideAnimations = {},
+  customTextOverlays = [],
   onSeek = () => {},
   onTogglePlay = () => {},
   onUpdateRows = null,
+  onUpdateCustomTextOverlays = null,
+  onOpenTextEditor = null,
+  selectedTextOverlayId = null,
+  onSelectTextOverlay = null,
+  onAddTextOverlay = null,
 }) {
   const scrollViewportRef = useRef(null);
   const trackRef = useRef(null);
@@ -29,6 +35,7 @@ export default function VisualTimeline({
   const [trimFeedback, setTrimFeedback] = useState(null); // { index, mode, newDur, delta }
 
   const slideTrimRef = useRef(null); // { index, mode, startX, initialRows, initialDuration, oldStart, oldEnd, oldDur, pxPerSec }
+  const textDragRef = useRef(null); // { id, mode, startX, initialStart, initialEnd, pxPerSec }
 
   // Calculate track width in pixels based on zoom level
   // Base width ensures it exceeds window width when zoom > 1
@@ -87,6 +94,25 @@ export default function VisualTimeline({
     setTrimFeedback({ index, mode, newDur: oldDur, delta: 0 });
   }, [rows, duration, trackWidth, onUpdateRows]);
 
+  // ── Text Overlay Drag & Trim Start ─────────────────────────────────────────
+  const handleTextDragStart = useCallback((e, item, mode) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (e.button !== 0 || !onUpdateCustomTextOverlays) return;
+
+    const pxPerSec = trackWidth / (duration || 1);
+    textDragRef.current = {
+      id: item.id,
+      mode, // 'move' | 'trim-start' | 'trim-end'
+      startX: e.clientX,
+      initialStart: item.startTime ?? 0,
+      initialEnd: item.endTime ?? ((item.startTime ?? 0) + 3),
+      pxPerSec,
+    };
+
+    onSelectTextOverlay?.(item.id);
+  }, [trackWidth, duration, onUpdateCustomTextOverlays, onSelectTextOverlay]);
+
   useEffect(() => {
     const handleMouseMove = (e) => {
       // 1. Trimming slide with ripple edit
@@ -136,7 +162,34 @@ export default function VisualTimeline({
         return;
       }
 
-      // 2. Dragging playhead seek
+      // 2. Dragging/trimming text overlay
+      const td = textDragRef.current;
+      if (td) {
+        const dt = (e.clientX - td.startX) / (td.pxPerSec || 48);
+        const { id, mode, initialStart, initialEnd } = td;
+        const oldDur = initialEnd - initialStart;
+
+        let newStart = initialStart;
+        let newEnd = initialEnd;
+
+        if (mode === 'trim-start') {
+          newStart = Math.max(0, Math.min(initialEnd - 0.2, Number((initialStart + dt).toFixed(2))));
+        } else if (mode === 'trim-end') {
+          newEnd = Math.max(initialStart + 0.2, Math.min(duration, Number((initialEnd + dt).toFixed(2))));
+        } else if (mode === 'move') {
+          newStart = Math.max(0, Math.min(duration - oldDur, Number((initialStart + dt).toFixed(2))));
+          newEnd = Number((newStart + oldDur).toFixed(2));
+        }
+
+        const nextOverlays = customTextOverlays.map((o) =>
+          o.id === id ? { ...o, startTime: newStart, endTime: newEnd } : o
+        );
+        onUpdateCustomTextOverlays?.(nextOverlays);
+        onSeek(newStart);
+        return;
+      }
+
+      // 3. Dragging playhead seek
       if (isDragging) {
         handleSeekFromEvent(e);
       }
@@ -145,6 +198,7 @@ export default function VisualTimeline({
     const handleMouseUp = () => {
       setIsDragging(false);
       slideTrimRef.current = null;
+      textDragRef.current = null;
       setTrimFeedback(null);
     };
 
@@ -154,7 +208,7 @@ export default function VisualTimeline({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging, handleSeekFromEvent, onUpdateRows, onSeek]);
+  }, [isDragging, handleSeekFromEvent, onUpdateRows, onSeek, customTextOverlays, onUpdateCustomTextOverlays, duration]);
 
   // Smoothly follow playhead when playing
   useEffect(() => {
@@ -259,6 +313,16 @@ export default function VisualTimeline({
             </button>
           </div>
 
+          {/* Quick Add / Manage Text Overlays Button */}
+          <button
+            type="button"
+            className="transport-add-text-btn"
+            onClick={() => (onAddTextOverlay ? onAddTextOverlay(currentTime) : onOpenTextEditor?.())}
+            title="Add decorated text overlay at current playhead"
+          >
+            ✨ + Text Overlay {customTextOverlays.length > 0 ? `(${customTextOverlays.length})` : ''}
+          </button>
+
           <button
             className={`follow-toggle-btn ${followPlayhead ? 'active' : ''}`}
             onClick={() => setFollowPlayhead((prev) => !prev)}
@@ -309,6 +373,27 @@ export default function VisualTimeline({
         {/* Fixed Left Track Headers Column */}
         <div className="track-headers-column">
           <div className="track-header-spacer" />
+
+          {/* Text Overlays Track Header */}
+          <div className="track-header track-header-text">
+            <span className="track-icon">✨</span>
+            <span className="track-name">T1 (Text)</span>
+            {customTextOverlays.length > 0 && (
+              <span className="track-count-badge">{customTextOverlays.length}</span>
+            )}
+            <button
+              type="button"
+              className="track-inline-add-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddTextOverlay ? onAddTextOverlay(currentTime) : onOpenTextEditor?.();
+              }}
+              title="Add text at current playhead"
+            >
+              +
+            </button>
+          </div>
+
           <div className="track-header track-header-video">
             <span className="track-icon">🎞️</span>
             <span className="track-name">V1 (Slides)</span>
@@ -341,6 +426,70 @@ export default function VisualTimeline({
                   </div>
                 );
               })}
+            </div>
+
+            {/* Track 0: Decorated Text Overlays Track */}
+            <div className="timeline-text-track" onMouseDown={(e) => e.stopPropagation()}>
+              {customTextOverlays.length === 0 ? (
+                <button
+                  type="button"
+                  className="timeline-empty-text-hint"
+                  onClick={() =>
+                    onAddTextOverlay ? onAddTextOverlay(currentTime) : onOpenTextEditor?.()
+                  }
+                  title="Click to add custom styled text on the timeline"
+                >
+                  ✨ + Add Decorated Text at {fmt(currentTime)}
+                </button>
+              ) : (
+                customTextOverlays.map((item) => {
+                  const start = item.startTime ?? 0;
+                  const end = item.endTime ?? (start + 3);
+                  const dur = Math.max(0.2, end - start);
+                  const leftPct = (start / (duration || 1)) * 100;
+                  const widthPct = Math.max(1, (dur / (duration || 1)) * 100);
+                  const isSelected = selectedTextOverlayId === item.id;
+                  const isCurrent = currentTime >= start && currentTime <= end;
+
+                  return (
+                    <div
+                      key={item.id}
+                      className={`timeline-text-block ${isSelected ? 'selected' : ''} ${
+                        isCurrent ? 'active' : ''
+                      }`}
+                      style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                      onMouseDown={(e) => handleTextDragStart(e, item, 'move')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectTextOverlay?.(item.id);
+                        onOpenTextEditor?.();
+                      }}
+                      title={`"${item.text}" (${dur.toFixed(1)}s, ${start.toFixed(1)}s - ${end.toFixed(1)}s)`}
+                    >
+                      {/* Left Trim Handle */}
+                      <div
+                        className="text-trim-handle text-trim--start"
+                        title="Drag to adjust start timestamp"
+                        onMouseDown={(e) => handleTextDragStart(e, item, 'trim-start')}
+                      />
+
+                      {/* Text Label */}
+                      <div className="timeline-text-inner">
+                        <span className="text-tag-icon">✨</span>
+                        <span className="text-tag-content">{item.text || 'Text'}</span>
+                        <span className="text-tag-dur">{dur.toFixed(1)}s</span>
+                      </div>
+
+                      {/* Right Trim Handle */}
+                      <div
+                        className="text-trim-handle text-trim--end"
+                        title="Drag to adjust duration / end timestamp"
+                        onMouseDown={(e) => handleTextDragStart(e, item, 'trim-end')}
+                      />
+                    </div>
+                  );
+                })
+              )}
             </div>
 
             {/* Track 1: Video / Slide Blocks */}

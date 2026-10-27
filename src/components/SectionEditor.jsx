@@ -3,11 +3,12 @@ import { readDoc } from '../lib/readDoc';
 import { parseScript, matchImages } from '../lib/parseScript';
 import { decodeAudio } from '../lib/audio';
 import { alignSlides } from '../lib/align';
-import { preloadImages, drawVideoFrame } from '../lib/renderVideo';
+import { preloadImages, drawVideoFrame, createDefaultTextOverlay } from '../lib/renderVideo';
 import { generateSlideImage } from '../lib/imageGen';
 import { synthesizeSpeechToWav, startMicrophoneRecording } from '../lib/tts';
 import VisualTimeline from './VisualTimeline';
 import SlideEllipseDrawer from './SlideEllipseDrawer';
+import TextOverlayEditorModal from './TextOverlayEditorModal';
 
 const fmt = (s) => {
   if (isNaN(s) || s < 0) s = 0;
@@ -45,6 +46,8 @@ export default function SectionEditor({
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [ttsStatus, setTtsStatus] = useState('');
   const [isRecordingMic, setIsRecordingMic] = useState(false);
+  const [textEditorOpen, setTextEditorOpen] = useState(false);
+  const [selectedTextOverlayId, setSelectedTextOverlayId] = useState(null);
   const recorderRef = useRef(null);
 
   const audioRef = useRef(null);
@@ -115,6 +118,7 @@ export default function SectionEditor({
         captionStyle,
         hookStyle,
         textOverlays: section.textOverlays || {},
+        customTextOverlays: section.customTextOverlays || [],
         title: '',
       });
     },
@@ -127,6 +131,7 @@ export default function SectionEditor({
       captionStyle,
       hookStyle,
       section.textOverlays,
+      section.customTextOverlays,
     ]
   );
 
@@ -716,6 +721,22 @@ export default function SectionEditor({
                   }));
                   setTimeout(() => renderCurrentPreview(currentTime), 20);
                 }}
+                customTextOverlays={section.customTextOverlays || []}
+                selectedTextOverlayId={selectedTextOverlayId}
+                onSelectTextOverlay={setSelectedTextOverlayId}
+                onOpenTextEditor={() => setTextEditorOpen(true)}
+                onAddTextOverlay={(t) => {
+                  const newO = createDefaultTextOverlay(t, `HOOK #${(section.customTextOverlays?.length || 0) + 1}`);
+                  const nextList = [...(section.customTextOverlays || []), newO];
+                  onUpdateSection(prev => ({ ...prev, customTextOverlays: nextList }));
+                  setSelectedTextOverlayId(newO.id);
+                  setTextEditorOpen(true);
+                  setTimeout(() => renderCurrentPreview(t), 20);
+                }}
+                onUpdateCustomTextOverlays={(nextList) => {
+                  onUpdateSection(prev => ({ ...prev, customTextOverlays: nextList }));
+                  setTimeout(() => renderCurrentPreview(currentTime), 20);
+                }}
               />
 
               {/* Section Slide Ellipse Drawer with Manual Image Replacement & Retention Hooks */}
@@ -770,6 +791,22 @@ export default function SectionEditor({
                 }}
                 onSeek={handleSeek}
                 isGenerating={isGenerating}
+              />
+
+              {/* Text Overlay Editor Modal */}
+              <TextOverlayEditorModal
+                isOpen={textEditorOpen}
+                onClose={() => setTextEditorOpen(false)}
+                currentTime={currentTime}
+                duration={section.duration || 1}
+                overlays={section.customTextOverlays || []}
+                onChangeOverlays={(nextList) => {
+                  onUpdateSection((prev) => ({ ...prev, customTextOverlays: nextList }));
+                  setTimeout(() => renderCurrentPreview(currentTime), 20);
+                }}
+                selectedOverlayId={selectedTextOverlayId}
+                onSelectOverlay={setSelectedTextOverlayId}
+                onSeek={handleSeek}
               />
             </div>
           )}

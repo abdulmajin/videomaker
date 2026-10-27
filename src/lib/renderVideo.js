@@ -18,6 +18,211 @@ export const HOOK_STYLES = [
   { id: 'none', label: '🚫 None (No Hooks)' },
 ];
 
+export const TEXT_STYLE_PRESETS = [
+  {
+    id: 'punch-stamp',
+    name: '💥 Viral Punch',
+    description: 'TikTok / Reels Hook: Bold yellow, thick black stroke & pop',
+    fontFamily: 'Impact',
+    fontSize: 48,
+    fontWeight: '900',
+    color: '#fde047',
+    strokeColor: '#000000',
+    strokeWidth: 6,
+    shadowColor: 'rgba(0,0,0,0.85)',
+    shadowBlur: 14,
+    shadowOffsetY: 4,
+    bgColor: 'rgba(0,0,0,0.82)',
+    bgRadius: 10,
+    bgPaddingX: 20,
+    bgPaddingY: 10,
+    bgBorderColor: '#fde047',
+    bgBorderWidth: 0,
+    textTransform: 'uppercase',
+    animation: 'bounce',
+    animDuration: 0.35,
+    presetPosition: 'center',
+  },
+  {
+    id: 'neon-glow',
+    name: '⚡ Neon Cyber',
+    description: 'Glowing cyan pill, high contrast cyber aesthetic',
+    fontFamily: 'system-ui',
+    fontSize: 44,
+    fontWeight: '800',
+    color: '#38bdf8',
+    strokeColor: '#0284c7',
+    strokeWidth: 2,
+    shadowColor: '#38bdf8',
+    shadowBlur: 24,
+    shadowOffsetY: 0,
+    bgColor: 'rgba(15, 23, 42, 0.92)',
+    bgRadius: 999,
+    bgPaddingX: 24,
+    bgPaddingY: 12,
+    bgBorderColor: '#38bdf8',
+    bgBorderWidth: 2,
+    textTransform: 'uppercase',
+    animation: 'pop',
+    animDuration: 0.35,
+    presetPosition: 'center',
+  },
+  {
+    id: 'modern-pill',
+    name: '🏷️ Modern Pill',
+    description: 'Clean emerald tag with bold white typography',
+    fontFamily: 'system-ui',
+    fontSize: 40,
+    fontWeight: '700',
+    color: '#ffffff',
+    strokeColor: '',
+    strokeWidth: 0,
+    shadowColor: 'rgba(0,0,0,0.5)',
+    shadowBlur: 10,
+    shadowOffsetY: 3,
+    bgColor: 'rgba(13, 148, 136, 0.95)',
+    bgRadius: 999,
+    bgPaddingX: 22,
+    bgPaddingY: 10,
+    bgBorderColor: '#ffffff',
+    bgBorderWidth: 0,
+    textTransform: 'none',
+    animation: 'slide-up',
+    animDuration: 0.35,
+    presetPosition: 'lower-third',
+  },
+  {
+    id: 'breaking-news',
+    name: '🚨 Breaking Banner',
+    description: 'Bold white text on high-urgency crimson red bar',
+    fontFamily: 'Impact',
+    fontSize: 46,
+    fontWeight: '900',
+    color: '#ffffff',
+    strokeColor: '#000000',
+    strokeWidth: 2,
+    shadowColor: 'rgba(0,0,0,0.7)',
+    shadowBlur: 8,
+    shadowOffsetY: 3,
+    bgColor: 'rgba(220, 38, 38, 0.95)',
+    bgRadius: 6,
+    bgPaddingX: 26,
+    bgPaddingY: 12,
+    bgBorderColor: '#fca5a5',
+    bgBorderWidth: 1,
+    textTransform: 'uppercase',
+    animation: 'typewriter',
+    animDuration: 0.45,
+    presetPosition: 'top',
+  },
+  {
+    id: 'classic-cinema',
+    name: '🎬 Classic Cinema',
+    description: 'Warm ivory serif with soft cinematic drop shadow',
+    fontFamily: 'Georgia',
+    fontSize: 42,
+    fontWeight: '700',
+    color: '#fffdf0',
+    strokeColor: 'rgba(0,0,0,0.85)',
+    strokeWidth: 2.5,
+    shadowColor: 'rgba(0,0,0,0.9)',
+    shadowBlur: 14,
+    shadowOffsetY: 4,
+    bgColor: 'transparent',
+    bgRadius: 0,
+    bgPaddingX: 0,
+    bgPaddingY: 0,
+    bgBorderColor: '',
+    bgBorderWidth: 0,
+    textTransform: 'none',
+    animation: 'fade-in',
+    animDuration: 0.4,
+    presetPosition: 'lower-third',
+  },
+  {
+    id: 'caution-badge',
+    name: '🟨 Caution Tag',
+    description: 'Black bold text on hazard warning yellow box',
+    fontFamily: 'Impact',
+    fontSize: 44,
+    fontWeight: '900',
+    color: '#000000',
+    strokeColor: '',
+    strokeWidth: 0,
+    shadowColor: 'rgba(0,0,0,0.6)',
+    shadowBlur: 10,
+    shadowOffsetY: 4,
+    bgColor: '#facc15',
+    bgRadius: 8,
+    bgPaddingX: 20,
+    bgPaddingY: 10,
+    bgBorderColor: '#000000',
+    bgBorderWidth: 2.5,
+    textTransform: 'uppercase',
+    animation: 'pop',
+    animDuration: 0.3,
+    presetPosition: 'center',
+  },
+  {
+    id: 'cyber-violet',
+    name: '💜 Cyber Violet',
+    description: 'Glowing royal violet badge with neon pop',
+    fontFamily: 'system-ui',
+    fontSize: 44,
+    fontWeight: '800',
+    color: '#ffffff',
+    strokeColor: 'rgba(0,0,0,0.4)',
+    strokeWidth: 1.5,
+    shadowColor: 'rgba(168, 85, 247, 0.85)',
+    shadowBlur: 22,
+    shadowOffsetY: 0,
+    bgColor: 'rgba(124, 58, 237, 0.9)',
+    bgRadius: 14,
+    bgPaddingX: 22,
+    bgPaddingY: 12,
+    bgBorderColor: '#c084fc',
+    bgBorderWidth: 1.5,
+    textTransform: 'uppercase',
+    animation: 'bounce',
+    animDuration: 0.35,
+    presetPosition: 'center',
+  },
+];
+
+export function createDefaultTextOverlay(currentTime = 0, defaultText = 'ADD TEXT HERE') {
+  const preset = TEXT_STYLE_PRESETS[0];
+  return {
+    id: `txt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    text: defaultText,
+    startTime: Number((currentTime || 0).toFixed(2)),
+    endTime: Number(((currentTime || 0) + 3.0).toFixed(2)),
+    presetPosition: preset.presetPosition || 'center',
+    x: 0.5,
+    y: 0.44,
+    width: 0.85,
+    stylePreset: preset.id,
+    fontFamily: preset.fontFamily,
+    fontSize: preset.fontSize,
+    fontWeight: preset.fontWeight,
+    color: preset.color,
+    strokeColor: preset.strokeColor,
+    strokeWidth: preset.strokeWidth,
+    shadowColor: preset.shadowColor,
+    shadowBlur: preset.shadowBlur,
+    shadowOffsetY: preset.shadowOffsetY,
+    bgColor: preset.bgColor,
+    bgRadius: preset.bgRadius,
+    bgPaddingX: preset.bgPaddingX,
+    bgPaddingY: preset.bgPaddingY,
+    bgBorderColor: preset.bgBorderColor,
+    bgBorderWidth: preset.bgBorderWidth,
+    textAlign: 'center',
+    textTransform: preset.textTransform,
+    animation: preset.animation,
+    animDuration: preset.animDuration,
+  };
+}
+
 export function getSupportedVideoMime() {
   const types = [
     'video/webm;codecs=vp9,opus',
@@ -97,6 +302,7 @@ export function drawVideoFrame({
   captionStyle = 'modern-card',
   hookStyle = 'punch-stamp',
   textOverlays = {},
+  customTextOverlays = [],
   title = '',
 }) {
   const isVertical = height > width;
@@ -227,6 +433,177 @@ export function drawVideoFrame({
       text: activeSlide.text,
       isVertical,
     });
+  }
+
+  // 7. Custom Multi-Text Overlays (Timeline timestamped, styled & decorated)
+  if (customTextOverlays && customTextOverlays.length > 0) {
+    drawCustomTimelineTextOverlays(ctx, {
+      width,
+      height,
+      time,
+      isVertical,
+      overlays: customTextOverlays,
+    });
+  }
+}
+
+// Custom Multi-Text Overlays Renderer (Decorated text placed at any timestamp & position)
+function drawCustomTimelineTextOverlays(ctx, { width, height, time, isVertical, overlays = [] }) {
+  const visible = overlays.filter(o => time >= (o.startTime ?? 0) && time <= (o.endTime ?? 0));
+  if (!visible.length) return;
+
+  for (const item of visible) {
+    const elapsed = time - (item.startTime ?? 0);
+    const animDur = item.animDuration || 0.35;
+
+    // Animations (bounce, pop, fade-in, typewriter, slide-up, none)
+    let scale = 1.0;
+    let opacity = 1.0;
+    let offsetY = 0;
+    let displayText = item.text || '';
+
+    if (item.animation === 'bounce') {
+      if (elapsed < animDur) {
+        const p = Math.max(0, Math.min(1, elapsed / animDur));
+        scale = 0.7 + 0.35 * Math.sin(p * Math.PI * 0.7);
+        opacity = Math.min(1, p * 1.5);
+      }
+    } else if (item.animation === 'pop') {
+      if (elapsed < animDur) {
+        const p = Math.max(0, Math.min(1, elapsed / animDur));
+        scale = 0.6 + 0.4 * Math.sin(p * Math.PI * 0.5);
+        opacity = Math.min(1, p * 2);
+      }
+    } else if (item.animation === 'fade-in') {
+      if (elapsed < animDur) {
+        opacity = Math.max(0, Math.min(1, elapsed / animDur));
+      }
+    } else if (item.animation === 'slide-up') {
+      if (elapsed < animDur) {
+        const p = Math.max(0, Math.min(1, elapsed / animDur));
+        offsetY = (1 - p) * 45;
+        opacity = Math.min(1, p * 1.5);
+      }
+    } else if (item.animation === 'typewriter') {
+      if (elapsed < animDur) {
+        const p = Math.max(0, Math.min(1, elapsed / animDur));
+        const chars = Math.max(1, Math.floor(p * displayText.length));
+        displayText = displayText.slice(0, chars);
+      }
+    }
+
+    // Exit fade (last 0.22s of overlay)
+    const remaining = (item.endTime ?? 0) - time;
+    if (remaining < 0.22) {
+      opacity = Math.max(0, opacity * (remaining / 0.22));
+    }
+
+    if (item.textTransform === 'uppercase') {
+      displayText = displayText.toUpperCase();
+    } else if (item.textTransform === 'lowercase') {
+      displayText = displayText.toLowerCase();
+    }
+
+    // Font calculation scaled to canvas resolution (base 1280px)
+    const scaleFactor = width / 1280;
+    const rawSize = item.fontSize || 44;
+    const fs = Math.round(rawSize * scaleFactor * (isVertical ? 1.15 : 1.0));
+    const fontStr = `${item.fontWeight || '800'} ${fs}px ${item.fontFamily || 'Impact, system-ui'}, sans-serif`;
+
+    ctx.save();
+    ctx.font = fontStr;
+    ctx.textAlign = item.textAlign || 'center';
+    ctx.textBaseline = 'middle';
+
+    const maxTextW = width * (item.width || (isVertical ? 0.88 : 0.80));
+    const lines = wrapText(ctx, displayText, maxTextW);
+    const lh = fs * 1.25;
+    const totalTextH = lines.length * lh;
+
+    // Determine center X and Y
+    let posX = width / 2;
+    if (item.presetPosition === 'custom' && item.x !== undefined) {
+      posX = item.x * width;
+    }
+
+    let posY = height / 2;
+    if (item.presetPosition === 'top') {
+      posY = isVertical ? height * 0.12 : height * 0.10;
+    } else if (item.presetPosition === 'center') {
+      posY = isVertical ? height * 0.44 : height * 0.42;
+    } else if (item.presetPosition === 'lower-third') {
+      posY = isVertical ? height * 0.72 : height * 0.68;
+    } else if (item.presetPosition === 'bottom') {
+      posY = isVertical ? height * 0.84 : height * 0.82;
+    } else if (item.presetPosition === 'custom' && item.y !== undefined) {
+      posY = item.y * height;
+    }
+
+    ctx.translate(posX, posY + offsetY);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = Math.max(0, Math.min(1, opacity));
+
+    // Measure maximum line width for background pill
+    let maxLineWidth = 0;
+    for (const line of lines) {
+      const lw = ctx.measureText(line).width;
+      if (lw > maxLineWidth) maxLineWidth = lw;
+    }
+
+    const padX = (item.bgPaddingX || 20) * scaleFactor;
+    const padY = (item.bgPaddingY || 10) * scaleFactor;
+    const boxW = maxLineWidth + padX * 2;
+    const boxH = totalTextH + padY * 2;
+    const radius = Math.min(item.bgRadius !== undefined ? item.bgRadius : 12, boxH / 2);
+
+    // Draw Background Box / Pill
+    if (item.bgColor && item.bgColor !== 'transparent') {
+      ctx.fillStyle = item.bgColor;
+      if (item.shadowColor && item.shadowBlur) {
+        ctx.shadowColor = item.shadowColor;
+        ctx.shadowBlur = item.shadowBlur * scaleFactor;
+        ctx.shadowOffsetY = (item.shadowOffsetY || 4) * scaleFactor;
+      }
+      drawRoundedRect(ctx, -boxW / 2, -boxH / 2, boxW, boxH, radius);
+      ctx.fill();
+
+      if (item.bgBorderColor && (item.bgBorderWidth || 0) > 0) {
+        ctx.strokeStyle = item.bgBorderColor;
+        ctx.lineWidth = (item.bgBorderWidth || 1) * scaleFactor;
+        ctx.stroke();
+      }
+    }
+
+    // Draw Glow / Drop Shadow on Text
+    if (!item.bgColor && item.shadowColor && item.shadowBlur) {
+      ctx.shadowColor = item.shadowColor;
+      ctx.shadowBlur = item.shadowBlur * scaleFactor;
+      ctx.shadowOffsetY = (item.shadowOffsetY || 4) * scaleFactor;
+    } else if (item.bgColor) {
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+    }
+
+    // Render Text Lines
+    const startY = -totalTextH / 2 + lh / 2;
+    lines.forEach((line, i) => {
+      const lineY = startY + i * lh;
+
+      // Stroke / Outline
+      if (item.strokeWidth && item.strokeWidth > 0 && item.strokeColor) {
+        ctx.strokeStyle = item.strokeColor;
+        ctx.lineWidth = item.strokeWidth * scaleFactor;
+        ctx.lineJoin = 'round';
+        ctx.miterLimit = 2;
+        ctx.strokeText(line, 0, lineY);
+      }
+
+      // Fill
+      ctx.fillStyle = item.color || '#ffffff';
+      ctx.fillText(line, 0, lineY);
+    });
+
+    ctx.restore();
   }
 }
 
@@ -515,6 +892,7 @@ export async function renderVideo({
   captionStyle = 'modern-card',
   hookStyle = 'punch-stamp',
   textOverlays = {},
+  customTextOverlays = [],
   bgmFile = null,
   bgmVolume = 0.15,
   autoDuck = true,
@@ -666,6 +1044,7 @@ export async function renderVideo({
         captionStyle,
         hookStyle,
         textOverlays,
+        customTextOverlays,
         title,
       });
 

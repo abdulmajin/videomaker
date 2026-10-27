@@ -13,6 +13,7 @@ import {
   drawVideoFrame,
   CAPTION_STYLES,
   HOOK_STYLES,
+  createDefaultTextOverlay,
 } from './lib/renderVideo';
 import { ANIMATION_TYPES } from './lib/animations';
 import {
@@ -25,6 +26,7 @@ import VisualTimeline from './components/VisualTimeline';
 import SlideEllipseDrawer from './components/SlideEllipseDrawer';
 import ImagePreviewModal from './components/ImagePreviewModal';
 import MasterPromptModal from './components/MasterPromptModal';
+import TextOverlayEditorModal from './components/TextOverlayEditorModal';
 import StudioPage from './pages/StudioPage';
 
 // ─── Helpers: blob URL ↔ base64 data URL (for project save/restore) ──────────
@@ -106,6 +108,7 @@ function createNewSection(index) {
     images: [],
     slidePrompts: {},
     textOverlays: {},
+    customTextOverlays: [],
     generatedImages: {},
     manualImages: {},
     slideAnimations: {},
@@ -153,6 +156,8 @@ export default function App() {
   const [mergeError, setMergeError] = useState('');
   const [mergedPlaying, setMergedPlaying] = useState(false);
   const [mergedCurrentTime, setMergedCurrentTime] = useState(0);
+  const [mergedTextEditorOpen, setMergedTextEditorOpen] = useState(false);
+  const [selectedMergedTextOverlayId, setSelectedMergedTextOverlayId] = useState(null);
 
   // Video Export
   const [isExporting, setIsExporting] = useState(false);
@@ -276,6 +281,7 @@ export default function App() {
         captionStyle,
         hookStyle,
         textOverlays: mergedData.textOverlays || {},
+        customTextOverlays: mergedData.customTextOverlays || [],
         title: '',
       });
     },
@@ -363,6 +369,7 @@ export default function App() {
       const mergedImageUrls = [];
       const mergedSlideAnimations = {};
       const mergedTextOverlays = {};
+      const mergedCustomTextOverlays = [];
       let globalSlideId = 1;
       let timeOffset = 0;
 
@@ -370,6 +377,16 @@ export default function App() {
         const secRows = sec.rows || [];
         const secSlides = sec.slides || [];
         const secImages = sec.effectiveImageUrls || [];
+        const secOverlays = sec.customTextOverlays || [];
+
+        secOverlays.forEach((o, oIdx) => {
+          mergedCustomTextOverlays.push({
+            ...o,
+            id: `mrg-sec-${secIdx}-${o.id || oIdx}`,
+            startTime: Number(((o.startTime ?? 0) + timeOffset).toFixed(2)),
+            endTime: Number(((o.endTime ?? 3) + timeOffset).toFixed(2)),
+          });
+        });
 
         secRows.forEach((row, rowIdx) => {
           const slide = secSlides[rowIdx] || {};
@@ -411,6 +428,7 @@ export default function App() {
         effectiveImageUrls: mergedImageUrls,
         slideAnimations: mergedSlideAnimations,
         textOverlays: mergedTextOverlays,
+        customTextOverlays: mergedCustomTextOverlays,
       });
 
       setTimeout(() => renderMergedPreview(0), 100);
@@ -452,6 +470,7 @@ export default function App() {
         captionStyle,
         hookStyle,
         textOverlays: mergedData.textOverlays,
+        customTextOverlays: mergedData.customTextOverlays || [],
         bgmFile,
         bgmVolume,
         autoDuck,
@@ -1052,14 +1071,25 @@ export default function App() {
                 {mergedData.rows.length} Total Slides • {fmt(mergedData.duration)} Total Duration
               </span>
             </div>
-            <button
-              type="button"
-              className="primary-btn"
-              onClick={handleOpenInStudio}
-              title="Open this merged video in the full Studio Editor"
-            >
-              🎬 Open in Studio Editor
-            </button>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <button
+                type="button"
+                className="secondary-btn"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => setMergedTextEditorOpen(true)}
+                title="Add and decorate multiple text overlays on the timeline"
+              >
+                ✨ Text Overlays {mergedData.customTextOverlays?.length ? `(${mergedData.customTextOverlays.length})` : ''}
+              </button>
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={handleOpenInStudio}
+                title="Open this merged video in the full Studio Editor"
+              >
+                🎬 Open in Studio Editor
+              </button>
+            </div>
           </div>
 
           <p className="hint">
@@ -1123,6 +1153,22 @@ export default function App() {
               setMergedData(prev => prev ? ({ ...prev, rows: newRows, duration: newDuration }) : prev);
               setTimeout(() => renderMergedPreview(mergedCurrentTime), 20);
             }}
+            customTextOverlays={mergedData.customTextOverlays || []}
+            selectedTextOverlayId={selectedMergedTextOverlayId}
+            onSelectTextOverlay={setSelectedMergedTextOverlayId}
+            onOpenTextEditor={() => setMergedTextEditorOpen(true)}
+            onAddTextOverlay={(t) => {
+              const newO = createDefaultTextOverlay(t, `HOOK #${(mergedData.customTextOverlays?.length || 0) + 1}`);
+              const nextList = [...(mergedData.customTextOverlays || []), newO];
+              setMergedData(prev => ({ ...prev, customTextOverlays: nextList }));
+              setSelectedMergedTextOverlayId(newO.id);
+              setMergedTextEditorOpen(true);
+              setTimeout(() => renderMergedPreview(t), 20);
+            }}
+            onUpdateCustomTextOverlays={(nextList) => {
+              setMergedData(prev => ({ ...prev, customTextOverlays: nextList }));
+              setTimeout(() => renderMergedPreview(mergedCurrentTime), 20);
+            }}
           />
 
           {/* Master Slide Ellipse Drawer with Manual Replace Option & Hooks */}
@@ -1168,6 +1214,22 @@ export default function App() {
               const url = mergedData.effectiveImageUrls[idx];
               if (url) setPreviewModalData({ url, title: `Merged Slide #${idx + 1}` });
             }}
+            onSeek={handleMergedSeek}
+          />
+
+          {/* Master Text Overlay Editor Modal */}
+          <TextOverlayEditorModal
+            isOpen={mergedTextEditorOpen}
+            onClose={() => setMergedTextEditorOpen(false)}
+            currentTime={mergedCurrentTime}
+            duration={mergedData.duration || 1}
+            overlays={mergedData.customTextOverlays || []}
+            onChangeOverlays={(nextList) => {
+              setMergedData(prev => ({ ...prev, customTextOverlays: nextList }));
+              setTimeout(() => renderMergedPreview(mergedCurrentTime), 20);
+            }}
+            selectedOverlayId={selectedMergedTextOverlayId}
+            onSelectOverlay={setSelectedMergedTextOverlayId}
             onSeek={handleMergedSeek}
           />
 
