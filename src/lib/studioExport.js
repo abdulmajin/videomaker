@@ -1,99 +1,151 @@
 /**
  * studioExport.js
  * Video export for the Studio Editor.
- * Composites slides + all overlay layers (text, shapes, images) + audio + BGM
- * using MediaRecorder and the drawStudioFrame canvas renderer.
+ * Composites slides + all overlay layers (text, shapes, images, video clips) +
+ * audio + BGM + sound effects with the drawStudioFrame canvas renderer.
+ * Uses offline WebCodecs encoding when the browser supports it and falls back
+ * to real-time MediaRecorder capture otherwise.
  */
 
-import { preloadStudioImages, preloadLayerImages, drawStudioFrame } from './studioRender.js';
+import { preloadStudioImages, preloadLayerImages, seekVideoLayers, drawStudioFrame } from './studioRender.js';
 import { getSupportedVideoMime } from './renderVideo.js';
+import { supportsFastExport, mixAudioOffline, encodeMp4 } from './fastExport.js';
+import { scheduleSfx } from './sfx.js';
+import { loadImage } from './frameExtras.js';
 
 /**
  * Export the studio project to an mp4/webm video file.
  *
- * @param {Object} params
- * @param {Array}   params.rows               - Slide timing rows [{id, start, text}]
- * @param {Array}   params.slides             - Slide data [{id, text, textOverlay}]
- * @param {Array}   params.imageUrls          - Per-slide image URLs
- * @param {Array}   params.layers             - Studio overlay layers
- * @param {Object}  params.transitions        - Per-slide transition types
- * @param {string}  params.audioUrl           - Voiceover audio URL (blob: or data:)
- * @param {string}  [params.bgmUrl]           - Background music URL
- * @param {number}  [params.bgmVolume=0.15]   - BGM volume 0–1
- * @param {boolean} [params.autoDuck=true]    - Auto-duck BGM during speech
- * @param {string}  [params.animationMode]    - Slide animation mode
- * @param {Object}  [params.slideAnimations]  - Per-slide animation overrides
- * @param {string}  [params.captionStyle]     - Caption style id
- * @param {string}  [params.hookStyle]        - Hook style id
- * @param {Object}  [params.textOverlays]     - Per-slide text overlays
- * @param {number}  params.duration           - Total video duration in seconds
- * @param {number}  [params.width=1280]       - Output canvas width
- * @param {number}  [params.height=720]       - Output canvas height
- * @param {number}  [params.fps=30]           - Frames per second
- * @param {string}  [params.title='video']    - Output filename base
- * @param {Function}[params.onProgress]       - (pct: number, msg: string) => void
- * @param {AbortSignal} [params.abortSignal]  - Cancellation signal
+ * Accepts every project field (rows, slides, imageUrls, layers, transitions,
+ * audioUrl, bgmUrl, bgmVolume, autoDuck, animationMode, slideAnimations,
+ * captionStyle, hookStyle, textOverlays, words, colorGrade, slideFilters,
+ * brand, logoUrl, sfx, duration) plus width, height, fps, title, onProgress
+ * and abortSignal.
  *
  * @returns {Promise<{blob: Blob, mimeType: string, filename: string}>}
  */
-export async function exportStudioVideo({
-  rows = [],
-  slides = [],
-  imageUrls = [],
-  layers = [],
-  transitions = {},
-  audioUrl = null,
-  bgmUrl = null,
-  bgmVolume = 0.15,
-  autoDuck = true,
-  animationMode = 'random',
-  slideAnimations = {},
-  captionStyle = 'modern-card',
-  hookStyle = 'punch-stamp',
-  textOverlays = {},
-  duration,
-  width = 1280,
-  height = 720,
-  fps = 30,
-  title = 'video',
-  onProgress = () => {},
-  abortSignal = null,
-}) {
-  if (!duration || duration <= 0) throw new Error('Duration must be greater than 0.');
-  if (!audioUrl) throw new Error('No audio track provided. Please record or import audio first.');
+export async function exportStudioVideo(options) {
+  if (!options.duration || options.duration <= 0) throw new Error('Duration must be greater than 0.');
+  if (!options.audioUrl) throw new Error('No audio track provided. Please record or import audio first.');
 
-  // ── 1. Preload all images ────────────────────────────────────────────────
+  if (supportsFastExport() && !options.forceRealtime) {
+    try {
+      return await exportFast(options);
+    } catch (err) {
+      if (err.message === 'Render cancelled') throw err;
+      console.warn('[studioExport] Fast export failed, falling back to real time:', err);
+      options.onProgress?.(0, 'Fast export unavailable — recording in real time…');
+    }
+  }
+  return exportRealtime(options);
+}
+
+async function prepare(options) {
+  const { imageUrls = [], layers = [], logoUrl = null, onProgress = () => {} } = options;
   onProgress(2, 'Preloading slide images…');
   const preloadedSlideImages = await preloadStudioImages(imageUrls);
+  onProgress(4, 'Preloading layers…');
+  // Export gets its own media elements so it never fights the preview player
+  const preloadedLayerImages = await preloadLayerImages(layers, new Map());
+  const logoImg = await loadImage(logoUrl);
+  return { preloadedSlideImages, preloadedLayerImages, logoImg };
+}
 
-  onProgress(4, 'Preloading layer images…');
-  const preloadedLayerImages = await preloadLayerImages(layers);
+function frameParams(o, media) {
+  return {
+    duration: o.duration,
+    rows: o.rows || [],
+    slides: o.slides || [],
+    preloadedSlideImages: media.preloadedSlideImages,
+    preloadedLayerImages: media.preloadedLayerImages,
+    animationMode: o.animationMode,
+    slideAnimations: o.slideAnimations || {},
+    captionStyle: o.captionStyle,
+    hookStyle: o.hookStyle,
+    textOverlays: o.textOverlays || {},
+    layers: o.layers || [],
+    transitions: o.transitions || {},
+    words: o.words || [],
+    colorGrade: o.colorGrade,
+    slideFilters: o.slideFilters || {},
+    brand: o.brand,
+    logoImg: media.logoImg,
+  };
+}
+
+function outputName(title, ext) {
+  const safeTitle = (title || 'video').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
+  return `${safeTitle}_studio.${ext}`;
+}
+
+async function exportFast(o) {
+  const { width = 1280, height = 720, fps = 30, onProgress = () => {}, abortSignal = null } = o;
+  const media = await prepare(o);
+  if (abortSignal?.aborted) throw new Error('Render cancelled');
+
+  onProgress(6, 'Mixing voice, music, clips & sound effects…');
+  const audioBuffer = await mixAudioOffline({
+    voice: o.audioUrl,
+    bgm: o.bgmUrl,
+    bgmVolume: o.bgmVolume ?? 0.15,
+    autoDuck: o.autoDuck ?? true,
+    rows: o.rows || [],
+    words: o.words || [],
+    duration: o.duration,
+    sfxOptions: { rows: o.rows || [], slides: o.slides || [], textOverlays: o.textOverlays || {}, hookStyle: o.hookStyle, sfx: o.sfx },
+    clips: (o.layers || [])
+      .filter((l) => l.type === 'video' && !l.muted && (l.volume ?? 1) > 0)
+      .map((l) => ({ src: l.videoUrl, start: l.startTime, offset: l.trimStart || 0, duration: l.endTime - l.startTime, volume: l.volume ?? 1 })),
+  });
+  if (abortSignal?.aborted) throw new Error('Render cancelled');
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  const params = frameParams(o, media);
+
+  const { blob, mimeType, extension } = await encodeMp4({
+    canvas, fps, duration: o.duration, audioBuffer, onProgress, abortSignal,
+    renderFrame: async (time) => {
+      await seekVideoLayers(params.layers, media.preloadedLayerImages, time);
+      drawStudioFrame({ ctx, width, height, time, ...params });
+    },
+  });
+  return { blob, mimeType, filename: outputName(o.title, extension) };
+}
+
+async function exportRealtime(o) {
+  const {
+    rows = [], duration, bgmUrl = null, bgmVolume = 0.15, autoDuck = true,
+    width = 1280, height = 720, fps = 30, onProgress = () => {}, abortSignal = null,
+  } = o;
+  const media = await prepare(o);
+  const params = frameParams(o, media);
 
   if (abortSignal?.aborted) throw new Error('Render cancelled');
 
-  // ── 2. Decode voiceover audio ────────────────────────────────────────────
+  // ── Decode voiceover audio ───────────────────────────────────────────────
   onProgress(6, 'Decoding voiceover audio…');
   const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-
-  // Fetch audio URL → ArrayBuffer → AudioBuffer
-  const audioArrayBuffer = await (await fetch(audioUrl)).arrayBuffer();
+  const audioArrayBuffer = await (await fetch(o.audioUrl)).arrayBuffer();
   const audioBuffer = await audioContext.decodeAudioData(audioArrayBuffer);
 
   if (abortSignal?.aborted) { await audioContext.close(); throw new Error('Render cancelled'); }
 
-  // ── 3. Set up canvas ─────────────────────────────────────────────────────
+  // ── Canvas ───────────────────────────────────────────────────────────────
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d');
 
-  // ── 4. Audio routing: voiceover → MediaStreamDestination ─────────────────
+  // ── Audio routing: voiceover → MediaStreamDestination ────────────────────
   const voiceSource = audioContext.createBufferSource();
   voiceSource.buffer = audioBuffer;
   const audioDest = audioContext.createMediaStreamDestination();
   voiceSource.connect(audioDest);
 
-  // ── 5. BGM routing (optional) ─────────────────────────────────────────────
+  // ── BGM routing (optional) ───────────────────────────────────────────────
   let bgmSource = null;
   let bgmGain   = null;
 
@@ -114,7 +166,7 @@ export async function exportStudioVideo({
     }
   }
 
-  // ── 6. Set up MediaRecorder ───────────────────────────────────────────────
+  // ── MediaRecorder ────────────────────────────────────────────────────────
   const canvasStream = canvas.captureStream(fps);
   const combinedStream = new MediaStream([
     ...canvasStream.getVideoTracks(),
@@ -132,7 +184,8 @@ export async function exportStudioVideo({
     if (e.data && e.data.size > 0) chunks.push(e.data);
   };
 
-  // ── 7. Render loop promise ────────────────────────────────────────────────
+  const videoLayers = params.layers.filter((l) => l.type === 'video');
+
   return new Promise((resolve, reject) => {
     let animId = null;
 
@@ -141,6 +194,7 @@ export async function exportStudioVideo({
       try { voiceSource.stop(); } catch (_) {}
       try { if (bgmSource) bgmSource.stop(); } catch (_) {}
       try { audioContext.close(); } catch (_) {}
+      for (const l of videoLayers) media.preloadedLayerImages.get(l.id)?.pause();
     };
 
     if (abortSignal) {
@@ -154,9 +208,7 @@ export async function exportStudioVideo({
     mediaRecorder.onstop = () => {
       cleanup();
       const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
-      const blob = new Blob(chunks, { type: mimeType });
-      const safeTitle = (title || 'video').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
-      resolve({ blob, mimeType, filename: `${safeTitle}_studio.${ext}` });
+      resolve({ blob: new Blob(chunks, { type: mimeType }), mimeType, filename: outputName(o.title, ext) });
     };
 
     mediaRecorder.onerror = (err) => {
@@ -164,11 +216,13 @@ export async function exportStudioVideo({
       reject(err);
     };
 
-    // Start recording
     mediaRecorder.start(100);
     voiceSource.start(0);
     if (bgmSource) bgmSource.start(0);
     const audioStartTime = audioContext.currentTime;
+    scheduleSfx(audioContext, audioDest, {
+      rows, slides: params.slides, textOverlays: params.textOverlays, hookStyle: o.hookStyle, sfx: o.sfx, offset: audioStartTime,
+    });
 
     function renderLoop() {
       if (abortSignal?.aborted) return;
@@ -185,28 +239,23 @@ export async function exportStudioVideo({
           const rEnd = rows[i + 1] ? rows[i + 1].start : duration;
           if (elapsed >= rStart && elapsed <= rEnd) { isSpeaking = true; break; }
         }
-        bgmGain.gain.setValueAtTime(
-          isSpeaking ? bgmVolume * 0.25 : bgmVolume,
-          audioContext.currentTime
-        );
+        bgmGain.gain.setValueAtTime(isSpeaking ? bgmVolume * 0.25 : bgmVolume, audioContext.currentTime);
       }
 
-      // Draw frame
-      drawStudioFrame({
-        ctx, width, height,
-        time: elapsed,
-        duration,
-        rows, slides,
-        preloadedSlideImages,
-        preloadedLayerImages,
-        animationMode,
-        slideAnimations,
-        captionStyle,
-        hookStyle,
-        textOverlays,
-        layers,
-        transitions,
-      });
+      // Keep video clips roughly in sync (clip audio isn't captured in this mode)
+      for (const l of videoLayers) {
+        const v = media.preloadedLayerImages.get(l.id);
+        if (!v) continue;
+        if (elapsed >= l.startTime && elapsed < l.endTime) {
+          const target = elapsed - l.startTime + (l.trimStart || 0);
+          if (Math.abs(v.currentTime - target) > 0.3) v.currentTime = target;
+          if (v.paused) v.play().catch(() => {});
+        } else if (!v.paused) {
+          v.pause();
+        }
+      }
+
+      drawStudioFrame({ ctx, width, height, time: elapsed, ...params });
 
       if (elapsed >= duration + 0.25) {
         onProgress(100, 'Finalizing video file…');

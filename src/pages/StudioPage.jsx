@@ -6,6 +6,7 @@ import StudioTimeline from '../components/studio/StudioTimeline';
 import { Icon } from '../components/studio/icons';
 import { preloadImages } from '../lib/renderVideo';
 import { drawStudioFrame, preloadLayerImages } from '../lib/studioRender';
+import { loadImage } from '../lib/frameExtras';
 import { exportStudioVideo } from '../lib/studioExport';
 import { getSnapshotInfo, loadSnapshot, deleteSnapshot } from '../lib/autosave';
 import { useAutosave } from '../lib/useAutosave';
@@ -30,6 +31,12 @@ const DEFAULT_PROJECT = {
   textOverlays: {},
   layers: [],
   transitions: {},
+  words: [],
+  colorGrade: 'none',
+  slideFilters: {},
+  brand: null,
+  logoUrl: null,
+  sfx: { mode: 'none', volume: 0.6 },
 };
 
 // Far-left tool rail (opens the left drawer)
@@ -216,14 +223,52 @@ export default function StudioPage({ initialProject, onBack }) {
       .catch(console.error);
   }, [project.imageUrls]);
 
-  // Preload layer images
+  // Preload layer media (images + video clips; cached by URL)
   useEffect(() => {
-    const imageLayers = (project.layers || []).filter(l => l.type === 'image' && l.imageUrl);
-    if (imageLayers.length === 0) return;
-    preloadLayerImages(imageLayers)
+    const mediaLayers = (project.layers || []).filter(l => (l.type === 'image' && l.imageUrl) || (l.type === 'video' && l.videoUrl));
+    if (mediaLayers.length === 0) return;
+    preloadLayerImages(mediaLayers)
       .then(setPreloadedLayerImages)
       .catch(console.error);
   }, [project.layers]);
+
+  // Brand logo for the watermark
+  const [logoImg, setLogoImg] = useState(null);
+  useEffect(() => {
+    let active = true;
+    loadImage(project.logoUrl).then(img => { if (active) setLogoImg(img); });
+    return () => { active = false; };
+  }, [project.logoUrl]);
+
+  // Keep video clips in step with the playhead during preview
+  useEffect(() => {
+    for (const l of project.layers || []) {
+      if (l.type !== 'video') continue;
+      const v = preloadedLayerImages.get(l.id);
+      if (!v) continue;
+      v.muted = !!l.muted;
+      v.volume = Math.max(0, Math.min(1, l.volume ?? 1));
+      const inRange = currentTime >= l.startTime && currentTime < l.endTime;
+      const target = currentTime - l.startTime + (l.trimStart || 0);
+      if (!inRange) { if (!v.paused) v.pause(); continue; }
+      if (isPlaying) {
+        if (Math.abs(v.currentTime - target) > 0.3) v.currentTime = target;
+        if (v.paused) v.play().catch(() => {});
+      } else {
+        if (!v.paused) v.pause();
+        if (Math.abs(v.currentTime - target) > 0.04) v.currentTime = target;
+      }
+    }
+  }, [currentTime, isPlaying, project.layers, preloadedLayerImages]);
+
+  // Redraw once a seeked clip frame is ready (the canvas only redraws on time changes)
+  const [frameTick, setFrameTick] = useState(0);
+  useEffect(() => {
+    const vids = (project.layers || []).filter(l => l.type === 'video').map(l => preloadedLayerImages.get(l.id)).filter(Boolean);
+    const bump = () => setFrameTick(t => t + 1);
+    vids.forEach(v => v.addEventListener('seeked', bump));
+    return () => vids.forEach(v => v.removeEventListener('seeked', bump));
+  }, [project.layers, preloadedLayerImages]);
 
   // ── Playback clock ─────────────────────────────────────────────────────────
   // Uses the voiceover element as the master clock when available, otherwise
@@ -346,6 +391,8 @@ export default function StudioPage({ initialProject, onBack }) {
         startTime: atTime,
         animation: 'none',
       };
+      // The second half of a clip continues from where the split happened in the source
+      if (src.type === 'video') second.trimStart = (src.trimStart || 0) + (atTime - src.startTime);
       return {
         ...p,
         layers: [...p.layers.map(l => (l.id === id ? { ...l, endTime: atTime } : l)), second],
@@ -367,8 +414,33 @@ export default function StudioPage({ initialProject, onBack }) {
     });
   }, []);
 
-  const handleAddImageLayer = useCallback((file) => {
+  const handleAddImageLayer = useCallback(async (file) => {
     const url = URL.createObjectURL(file);
+    if (file.type.startsWith('video/')) {
+      const sourceDuration = await new Promise((resolve) => {
+        const v = document.createElement('video');
+        v.preload = 'metadata';
+        v.onloadedmetadata = () => resolve(Number.isFinite(v.duration) ? v.duration : 5);
+        v.onerror = () => resolve(5);
+        v.src = url;
+      });
+      const start = timeRef.current;
+      handleAddLayer({
+        type: 'video',
+        name: file.name,
+        videoUrl: url,
+        x: 0, y: 0, width: 1, height: 1,
+        rotation: 0, opacity: 1, zIndex: 2,
+        animation: 'none', animDuration: 0.4,
+        startTime: start,
+        endTime: Math.min(start + sourceDuration, Math.max(project.duration, start + 0.5)),
+        trimStart: 0,
+        sourceDuration,
+        volume: 1,
+        muted: false,
+      });
+      return;
+    }
     handleAddLayer({
       type: 'image',
       name: file.name,
@@ -484,6 +556,12 @@ export default function StudioPage({ initialProject, onBack }) {
         captionStyle: project.captionStyle,
         hookStyle: project.hookStyle,
         textOverlays: project.textOverlays,
+        words: project.words,
+        colorGrade: project.colorGrade,
+        slideFilters: project.slideFilters,
+        brand: project.brand,
+        logoUrl: project.logoUrl,
+        sfx: project.sfx,
         duration: project.duration,
         width: w,
         height: h,
@@ -526,8 +604,13 @@ export default function StudioPage({ initialProject, onBack }) {
       layers: project.layers,
       transitions: project.transitions,
       duration: project.duration,
+      words: project.words,
+      colorGrade: project.colorGrade,
+      slideFilters: project.slideFilters,
+      brand: project.brand,
+      logoImg,
     });
-  }, [project, preloadedSlideImages, preloadedLayerImages]);
+  }, [project, preloadedSlideImages, preloadedLayerImages, logoImg, frameTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedLayer = project.layers.find(l => l.id === selectedLayerId) || null;
 
@@ -552,6 +635,9 @@ export default function StudioPage({ initialProject, onBack }) {
       } else if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
         e.preventDefault();
         handleRedo();
+      } else if (!mod && e.key.toLowerCase() === 's' && selectedLayerId) {
+        e.preventDefault();
+        handleSplitLayer(selectedLayerId, timeRef.current);
       } else if (mod && e.key.toLowerCase() === 'd' && selectedLayerId) {
         e.preventDefault();
         handleDuplicateLayer(selectedLayerId);
@@ -576,7 +662,7 @@ export default function StudioPage({ initialProject, onBack }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedLayerId, project.layers, handleUndo, handleRedo, handleDeleteLayer, handleDuplicateLayer, handleUpdateLayer, seek]);
+  }, [selectedLayerId, project.layers, handleUndo, handleRedo, handleDeleteLayer, handleDuplicateLayer, handleUpdateLayer, handleSplitLayer, seek]);
 
   const handleSelectLayer = useCallback((id) => {
     setSelectedLayerId(id);

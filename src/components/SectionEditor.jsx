@@ -10,6 +10,7 @@ import VisualTimeline from './VisualTimeline';
 import SlideEllipseDrawer from './SlideEllipseDrawer';
 import TextOverlayEditorModal from './TextOverlayEditorModal';
 import VideoTextCanvasInteractiveLayer from './VideoTextCanvasInteractiveLayer';
+import TranscriptReview from './TranscriptReview';
 
 const fmt = (s) => {
   if (isNaN(s) || s < 0) s = 0;
@@ -34,6 +35,7 @@ export default function SectionEditor({
   onUpdateSection,
   onRemoveSection,
   onPreviewImage,
+  look = {},
 }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -121,9 +123,17 @@ export default function SectionEditor({
         textOverlays: section.textOverlays || {},
         customTextOverlays: section.customTextOverlays || [],
         title: '',
+        words: section.words || [],
+        colorGrade: look.colorGrade,
+        slideFilters: section.slideFilters || {},
+        brand: look.brand,
+        logoImg: look.logoImg,
       });
     },
     [
+      section.words,
+      section.slideFilters,
+      look,
       section.rows,
       section.duration,
       slides,
@@ -691,6 +701,28 @@ export default function SectionEditor({
             {transcribeStatus && <span className="status-inline">{transcribeStatus}</span>}
           </div>
 
+          <TranscriptReview
+            words={section.words || []}
+            slides={slides}
+            rows={section.rows || []}
+            onChangeWords={(nextWords) => {
+              onUpdateSection((prev) => ({ ...prev, words: nextWords }));
+              setTimeout(() => renderCurrentPreview(currentTime), 20);
+            }}
+            onRealign={() => {
+              onUpdateSection((prev) => ({
+                ...prev,
+                rows: alignSlides(slides, prev.words || [], prev.duration || 0),
+              }));
+              setTimeout(() => renderCurrentPreview(currentTime), 20);
+            }}
+            onSeek={(t) => {
+              if (audioRef.current) audioRef.current.currentTime = t;
+              setCurrentTime(t);
+              renderCurrentPreview(t);
+            }}
+          />
+
           {localError && <div className="error-banner">{localError}</div>}
 
           {/* Section Video Preview (Live Canvas & Timeline) */}
@@ -787,6 +819,14 @@ export default function SectionEditor({
                 slideAnimations={section.slideAnimations || {}}
                 slidePrompts={section.slidePrompts || {}}
                 textOverlays={section.textOverlays || {}}
+                slideFilters={section.slideFilters || {}}
+                onSetSlideFilter={(idx, grade) => {
+                  onUpdateSection((prev) => ({
+                    ...prev,
+                    slideFilters: { ...(prev.slideFilters || {}), [idx]: grade },
+                  }));
+                  setTimeout(() => renderCurrentPreview(currentTime), 20);
+                }}
                 onSetSlideAnimation={(idx, anim) => {
                   onUpdateSection((prev) => ({
                     ...prev,

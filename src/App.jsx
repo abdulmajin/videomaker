@@ -32,6 +32,10 @@ import StudioPage from './pages/StudioPage';
 import RecoveryBanner, { autosaveLabel } from './components/RecoveryBanner';
 import { getSnapshotInfo, loadSnapshot, deleteSnapshot } from './lib/autosave';
 import { useAutosave } from './lib/useAutosave';
+import { useUndoHistory } from './lib/useUndoHistory';
+import { COLOR_GRADES, DEFAULT_BRAND, mergeWords, buildChapters, loadImage } from './lib/frameExtras';
+import { SFX_MODES } from './lib/sfx';
+import { supportsFastExport } from './lib/fastExport';
 
 // ─── Helpers: blob URL ↔ base64 data URL (for project save/restore) ──────────
 async function blobUrlToDataUrl(url) {
@@ -127,6 +131,24 @@ function createNewSection(index) {
   };
 }
 
+// Two Maker snapshots are "the same" when nothing but SectionEditor's derived
+// fields (slides, effectiveImageUrls) changed — those updates aren't user edits.
+const DERIVED_SECTION_KEYS = new Set(['slides', 'effectiveImageUrls']);
+function undoSnapshotsEqual(a, b) {
+  for (const key of Object.keys(a)) {
+    if (key === 'sections') continue;
+    if (!Object.is(a[key], b[key])) return false;
+  }
+  if (a.sections.length !== b.sections.length) return false;
+  return a.sections.every((sa, i) => {
+    const sb = b.sections[i];
+    if (sa === sb) return true;
+    const keys = new Set([...Object.keys(sa), ...Object.keys(sb)]);
+    for (const k of keys) if (!DERIVED_SECTION_KEYS.has(k) && !Object.is(sa[k], sb[k])) return false;
+    return true;
+  });
+}
+
 export default function App() {
   // ── Page navigation ────────────────────────────────────────────────────────
   const [page, setPage] = useState('maker'); // 'maker' | 'studio'
@@ -150,6 +172,12 @@ export default function App() {
   const [animationMode, setAnimationMode] = useState('random');
   const [captionStyle, setCaptionStyle] = useState('modern-card');
   const [hookStyle, setHookStyle] = useState('punch-stamp'); // 'punch-stamp' | 'chapter-pill' | 'bottom-badge' | 'none'
+
+  // Look, Brand Kit & Sound Effects
+  const [colorGrade, setColorGrade] = useState('none');
+  const [brand, setBrand] = useState(() => ({ ...DEFAULT_BRAND, logoFile: null }));
+  const [sfx, setSfx] = useState({ mode: 'none', volume: 0.6 });
+  const [chapters, setChapters] = useState(null); // { text, warnings }
 
   // Background Music (BGM) & Auto-Ducking
   const [bgmFile, setBgmFile] = useState(null);
@@ -190,6 +218,17 @@ export default function App() {
   const abortControllerRef = useRef(null);
   const loadFileInputRef = useRef(null);
 
+  // Brand logo → object URL → decoded image for the canvas renderers
+  const logoUrl = useMemo(() => (brand.logoFile ? URL.createObjectURL(brand.logoFile) : null), [brand.logoFile]);
+  const [logoImg, setLogoImg] = useState(null);
+  useEffect(() => {
+    let active = true;
+    loadImage(logoUrl).then((img) => { if (active) setLogoImg(img); });
+    return () => { active = false; };
+  }, [logoUrl]);
+  const look = useMemo(() => ({ colorGrade, brand, logoImg }), [colorGrade, brand, logoImg]);
+  const updateBrand = (changes) => setBrand((b) => ({ ...b, ...changes }));
+
   // ── Autosave & crash recovery (IndexedDB) ──────────────────────────────────
   // 'checking' → looking for a snapshot; 'prompt' → asking the user; 'ready' → autosaving
   const [recovery, setRecovery] = useState({ phase: 'checking', info: null, busy: false });
@@ -207,7 +246,7 @@ export default function App() {
   // blob URLs that just point at a stored File are recreated on restore.
   const makerSnapshot = useMemo(() => ({
     projectTitle, model, aspectRatio, imageEngine, visualStyle,
-    animationMode, captionStyle, hookStyle, resolution,
+    animationMode, captionStyle, hookStyle, resolution, colorGrade, brand, sfx,
     bgmFile, bgmUrl: bgmFile ? null : bgmUrl, bgmVolume, autoDuck,
     sections: sections.map(({ slides, effectiveImageUrls, ...s }) => ({
       ...s,
@@ -215,7 +254,7 @@ export default function App() {
     })),
     mergedData: mergedData ? { ...mergedData, audioFile: null } : null,
   }), [projectTitle, model, aspectRatio, imageEngine, visualStyle, animationMode, captionStyle,
-    hookStyle, resolution, bgmFile, bgmUrl, bgmVolume, autoDuck, sections, mergedData]);
+    hookStyle, resolution, colorGrade, brand, sfx, bgmFile, bgmUrl, bgmVolume, autoDuck, sections, mergedData]);
 
   const makerAutosave = useAutosave({
     key: 'maker',
@@ -246,6 +285,9 @@ export default function App() {
         if (d.captionStyle) setCaptionStyle(d.captionStyle);
         if (d.hookStyle) setHookStyle(d.hookStyle);
         if (d.resolution) setResolution(d.resolution);
+        if (d.colorGrade) setColorGrade(d.colorGrade);
+        if (d.brand) setBrand({ ...DEFAULT_BRAND, logoFile: null, ...d.brand });
+        if (d.sfx) setSfx(d.sfx);
         if (d.bgmVolume != null) setBgmVolume(d.bgmVolume);
         if (d.autoDuck != null) setAutoDuck(d.autoDuck);
         if (d.bgmFile) {
@@ -268,6 +310,7 @@ export default function App() {
         }
       }
       setRecovery({ phase: 'ready', info: null, busy: false });
+      history.reset();
       setSaveNotice('✓ Restored your autosaved project');
       setTimeout(() => setSaveNotice(''), 3000);
     } catch (err) {
@@ -282,6 +325,50 @@ export default function App() {
     await deleteSnapshot('maker').catch((err) => console.warn('Discard failed:', err));
     setRecovery({ phase: 'ready', info: null, busy: false });
   };
+
+  // ── Undo / redo for the Maker page ─────────────────────────────────────────
+  const undoSnapshot = useMemo(() => ({
+    projectTitle, aspectRatio, animationMode, captionStyle, hookStyle, colorGrade, brand, sfx,
+    bgmFile, bgmUrl, bgmVolume, autoDuck, sections, mergedData,
+  }), [projectTitle, aspectRatio, animationMode, captionStyle, hookStyle, colorGrade, brand, sfx,
+    bgmFile, bgmUrl, bgmVolume, autoDuck, sections, mergedData]);
+
+  const applyUndoSnapshot = useCallback((snap) => {
+    setProjectTitle(snap.projectTitle);
+    setAspectRatio(snap.aspectRatio);
+    setAnimationMode(snap.animationMode);
+    setCaptionStyle(snap.captionStyle);
+    setHookStyle(snap.hookStyle);
+    setColorGrade(snap.colorGrade);
+    setBrand(snap.brand);
+    setSfx(snap.sfx);
+    setBgmFile(snap.bgmFile);
+    setBgmUrl(snap.bgmUrl);
+    setBgmVolume(snap.bgmVolume);
+    setAutoDuck(snap.autoDuck);
+    setMergedData(snap.mergedData);
+    // Keep SectionEditor's derived fields; it recomputes them when their inputs change
+    setSections((cur) => snap.sections.map((sec) => {
+      const live = cur.find((c) => c.id === sec.id);
+      return live ? { ...sec, slides: live.slides, effectiveImageUrls: live.effectiveImageUrls } : sec;
+    }));
+  }, []);
+
+  const history = useUndoHistory(undoSnapshot, applyUndoSnapshot, undoSnapshotsEqual);
+
+  useEffect(() => {
+    if (page !== 'maker') return undefined;
+    const onKey = (e) => {
+      const tag = (e.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); history.undo(); }
+      else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); history.redo(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [page, history]);
 
   // Save API key
   const handleApiKeyChange = (val) => {
@@ -384,9 +471,14 @@ export default function App() {
         textOverlays: mergedData.textOverlays || {},
         customTextOverlays: mergedData.customTextOverlays || [],
         title: '',
+        words: mergedData.words || [],
+        colorGrade,
+        slideFilters: mergedData.slideFilters || {},
+        brand,
+        logoImg,
       });
     },
-    [mergedData, animationMode, captionStyle, hookStyle]
+    [mergedData, animationMode, captionStyle, hookStyle, colorGrade, brand, logoImg]
   );
 
   // Playback loop for master merged video
@@ -471,6 +563,7 @@ export default function App() {
       const mergedSlideAnimations = {};
       const mergedTextOverlays = {};
       const mergedCustomTextOverlays = [];
+      const mergedSlideFilters = {};
       let globalSlideId = 1;
       let timeOffset = 0;
 
@@ -514,6 +607,7 @@ export default function App() {
           mergedImageUrls.push(imgUrl);
           mergedSlideAnimations[globalSlideId - 1] = anim;
           mergedTextOverlays[globalSlideId - 1] = hook;
+          if (sec.slideFilters?.[rowIdx]) mergedSlideFilters[globalSlideId - 1] = sec.slideFilters[rowIdx];
           globalSlideId++;
         });
 
@@ -530,7 +624,10 @@ export default function App() {
         slideAnimations: mergedSlideAnimations,
         textOverlays: mergedTextOverlays,
         customTextOverlays: mergedCustomTextOverlays,
+        slideFilters: mergedSlideFilters,
+        words: mergeWords(readySections),
       });
+      setChapters(null);
 
       setTimeout(() => renderMergedPreview(0), 100);
     } catch (err) {
@@ -541,49 +638,62 @@ export default function App() {
   };
 
   // Video Export for Merged Video
-  const handleExportMergedVideo = async () => {
+  // formats: list of aspect ratios to render, e.g. ['16:9'] or ['16:9', '9:16']
+  const handleExportMergedVideo = async (formats = [aspectRatio]) => {
     if (!mergedData?.audioFile || !mergedData?.rows?.length) return;
 
     setIsExporting(true);
     setExportProgress(0);
     setExportStatus('Starting video render…');
     abortControllerRef.current = new AbortController();
-
-    const isVertical = aspectRatio === '9:16';
-    let [w, h] = resolution === '1080p' ? [1920, 1080] : [1280, 720];
-    if (isVertical) {
-      [w, h] = resolution === '1080p' ? [1080, 1920] : [720, 1280];
-    }
+    const saved = [];
 
     try {
-      const { blob, filename } = await renderVideo({
-        audioFile: mergedData.audioFile,
-        rows: mergedData.rows,
-        slides: mergedData.slides,
-        imageUrls: mergedData.effectiveImageUrls,
-        duration: mergedData.duration,
-        title: projectTitle,
-        width: w,
-        height: h,
-        fps: 30,
-        animationMode,
-        slideAnimations: mergedData.slideAnimations,
-        captionStyle,
-        hookStyle,
-        textOverlays: mergedData.textOverlays,
-        customTextOverlays: mergedData.customTextOverlays || [],
-        bgmFile,
-        bgmVolume,
-        autoDuck,
-        onProgress: (pct, msg) => {
-          setExportProgress(pct);
-          setExportStatus(msg);
-        },
-        abortSignal: abortControllerRef.current.signal,
-      });
+      for (let fi = 0; fi < formats.length; fi++) {
+        const fmtRatio = formats[fi];
+        const vertical = fmtRatio === '9:16';
+        let [w, h] = resolution === '1080p' ? [1920, 1080] : [1280, 720];
+        if (vertical) [w, h] = resolution === '1080p' ? [1080, 1920] : [720, 1280];
+        const label = formats.length > 1 ? `[${fi + 1}/${formats.length} · ${fmtRatio}] ` : '';
+        const suffix = formats.length > 1 ? (vertical ? '_vertical' : '_widescreen') : '';
 
-      downloadBlob(blob, filename);
-      setExportStatus(`Export complete! Saved as ${filename}`);
+        const { blob, filename } = await renderVideo({
+          audioFile: mergedData.audioFile,
+          rows: mergedData.rows,
+          slides: mergedData.slides,
+          imageUrls: mergedData.effectiveImageUrls,
+          duration: mergedData.duration,
+          title: `${projectTitle}${suffix}`,
+          width: w,
+          height: h,
+          fps: 30,
+          animationMode,
+          slideAnimations: mergedData.slideAnimations,
+          captionStyle,
+          hookStyle,
+          textOverlays: mergedData.textOverlays,
+          // Overlays were placed for the current format; skip them on the other one
+          customTextOverlays: fmtRatio === aspectRatio ? mergedData.customTextOverlays || [] : [],
+          bgmFile,
+          bgmVolume,
+          autoDuck,
+          words: mergedData.words || [],
+          colorGrade,
+          slideFilters: mergedData.slideFilters || {},
+          brand,
+          logoImg,
+          sfx,
+          onProgress: (pct, msg) => {
+            setExportProgress(Math.round((fi * 100 + pct) / formats.length));
+            setExportStatus(label + msg);
+          },
+          abortSignal: abortControllerRef.current.signal,
+        });
+
+        downloadBlob(blob, filename);
+        saved.push(filename);
+      }
+      setExportStatus(`Export complete! Saved as ${saved.join(', ')}`);
     } catch (err) {
       if (err.message !== 'Render cancelled') {
         setExportStatus(`Export error: ${err.message}`);
@@ -620,6 +730,12 @@ export default function App() {
     );
     const safeTitle = (projectTitle || 'video').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
     downloadText(json, `${safeTitle}_timeline.json`, 'application/json;charset=utf-8');
+  };
+
+  // YouTube chapters (one per section)
+  const handleBuildChapters = () => {
+    if (!mergedData) return;
+    setChapters(buildChapters(mergedData.rows, mergedData.duration));
   };
 
   // Download All Images across all sections
@@ -779,6 +895,12 @@ export default function App() {
       textOverlays: mergedData.textOverlays || {},
       layers: [],
       transitions: {},
+      words: mergedData.words || [],
+      colorGrade,
+      slideFilters: mergedData.slideFilters || {},
+      brand: { ...brand, logoFile: null },
+      logoUrl,
+      sfx,
       // Identifies this hand-off so Studio can tell "returning to the same
       // session" (restore its autosave silently) from "opened a new project".
       _openedAt: Date.now(),
@@ -855,6 +977,24 @@ export default function App() {
           </div>
 
           <div className="project-file-actions">
+            <button
+              type="button"
+              className="ghost small-btn"
+              onClick={history.undo}
+              disabled={!history.canUndo}
+              title="Undo (Ctrl+Z)"
+            >
+              ↶ Undo
+            </button>
+            <button
+              type="button"
+              className="ghost small-btn"
+              onClick={history.redo}
+              disabled={!history.canRedo}
+              title="Redo (Ctrl+Y)"
+            >
+              ↷ Redo
+            </button>
             <button
               type="button"
               className="ghost small-btn"
@@ -1100,6 +1240,101 @@ export default function App() {
         </div>
       </section>
 
+      {/* Look, Brand Kit & Sound */}
+      <section className="global-config-section">
+        <div className="section-header-row">
+          <div>
+            <h2>Look, Brand Kit &amp; Sound Effects</h2>
+            <p className="hint">Applied to every preview and export. Per-slide colour grades can be set in each slide shelf.</p>
+          </div>
+        </div>
+
+        <div className="animation-options-grid">
+          <label>
+            Color Grade (all slides):
+            <select value={colorGrade} onChange={(e) => setColorGrade(e.target.value)}>
+              {COLOR_GRADES.map((g) => (
+                <option key={g.id} value={g.id}>{g.label}</option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Sound Effects:
+            <select value={sfx.mode} onChange={(e) => setSfx((x) => ({ ...x, mode: e.target.value }))}>
+              {SFX_MODES.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+            {sfx.mode !== 'none' && (
+              <span className="inline-range">
+                <input
+                  type="range" min="0" max="1" step="0.05" value={sfx.volume}
+                  onChange={(e) => setSfx((x) => ({ ...x, volume: parseFloat(e.target.value) }))}
+                />
+                <small>{Math.round(sfx.volume * 100)}%</small>
+              </span>
+            )}
+            <small className="hint">Synthesized whooshes/pops, mixed into the export.</small>
+          </label>
+
+          <label>
+            End Card Text (last seconds):
+            <input
+              value={brand.endCardText}
+              onChange={(e) => updateBrand({ endCardText: e.target.value })}
+              placeholder="e.g. Subscribe for more!"
+            />
+            {brand.endCardText.trim() && (
+              <span className="inline-range">
+                <input
+                  type="range" min="2" max="8" step="0.5" value={brand.endCardSeconds}
+                  onChange={(e) => updateBrand({ endCardSeconds: parseFloat(e.target.value) })}
+                />
+                <small>{brand.endCardSeconds}s</small>
+                <input
+                  type="color" value={brand.accentColor} title="End card colour"
+                  onChange={(e) => updateBrand({ accentColor: e.target.value })}
+                />
+              </span>
+            )}
+          </label>
+        </div>
+
+        <div className="bgm-control-box" style={{ marginTop: '14px' }}>
+          <div className="bgm-header-row">
+            <span style={{ fontWeight: 700, fontSize: '0.90rem' }}>🏷️ Logo Watermark:</span>
+            {brand.logoFile && (
+              <button type="button" className="ghost small-btn" onClick={() => updateBrand({ logoFile: null })}>
+                Remove logo
+              </button>
+            )}
+          </div>
+          <div className="bgm-inputs-row">
+            <input type="file" accept="image/*" onChange={(e) => e.target.files[0] && updateBrand({ logoFile: e.target.files[0] })} />
+            {brand.logoFile && <span className="badge badge-success">✓ {brand.logoFile.name}</span>}
+            {brand.logoFile && (
+              <>
+                <select value={brand.logoPosition} onChange={(e) => updateBrand({ logoPosition: e.target.value })}>
+                  <option value="top-left">↖ Top left</option>
+                  <option value="top-right">↗ Top right</option>
+                  <option value="bottom-left">↙ Bottom left</option>
+                  <option value="bottom-right">↘ Bottom right</option>
+                </select>
+                <div className="volume-slider-group">
+                  <span style={{ fontSize: '0.80rem' }}>Size:</span>
+                  <input type="range" min="0.05" max="0.3" step="0.01" value={brand.logoSize}
+                    onChange={(e) => updateBrand({ logoSize: parseFloat(e.target.value) })} />
+                  <span style={{ fontSize: '0.80rem' }}>Opacity:</span>
+                  <input type="range" min="0.2" max="1" step="0.05" value={brand.logoOpacity}
+                    onChange={(e) => updateBrand({ logoOpacity: parseFloat(e.target.value) })} />
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </section>
+
       {/* Sections Control Panel */}
       <section className="sections-control-panel">
         <div className="sections-control-header">
@@ -1158,6 +1393,7 @@ export default function App() {
             onUpdateSection={(updater) => handleUpdateSection(idx, updater)}
             onRemoveSection={() => handleRemoveSection(idx)}
             onPreviewImage={(url, title) => setPreviewModalData({ url, title })}
+            look={look}
           />
         ))}
       </div>
@@ -1317,6 +1553,11 @@ export default function App() {
             manualImages={{}}
             animationMode={animationMode}
             slideAnimations={mergedData.slideAnimations}
+            slideFilters={mergedData.slideFilters || {}}
+            onSetSlideFilter={(idx, grade) => {
+              setMergedData((prev) => ({ ...prev, slideFilters: { ...(prev.slideFilters || {}), [idx]: grade } }));
+              setTimeout(() => renderMergedPreview(mergedCurrentTime), 20);
+            }}
             slidePrompts={{}}
             textOverlays={mergedData.textOverlays || {}}
             onSetSlideAnimation={(idx, anim) => {
@@ -1387,9 +1628,19 @@ export default function App() {
                 type="button"
                 className="primary-btn export-btn"
                 disabled={isExporting}
-                onClick={handleExportMergedVideo}
+                onClick={() => handleExportMergedVideo()}
               >
                 {isExporting ? '⏳ Rendering Video…' : `📥 Export ${aspectRatio} Video`}
+              </button>
+
+              <button
+                type="button"
+                className="secondary-btn"
+                disabled={isExporting}
+                onClick={() => handleExportMergedVideo(['16:9', '9:16'])}
+                title="Render a 16:9 widescreen and a 9:16 vertical version one after the other"
+              >
+                🎞️ Export 16:9 + 9:16
               </button>
 
               <button
@@ -1416,11 +1667,50 @@ export default function App() {
               <button
                 type="button"
                 className="ghost"
+                onClick={handleBuildChapters}
+                title="Timestamps for your YouTube description, one chapter per section"
+              >
+                📑 YouTube Chapters
+              </button>
+              <button
+                type="button"
+                className="ghost"
                 onClick={handleDownloadAllImages}
               >
                 💾 Download All Images
               </button>
             </div>
+
+            <p className="hint" style={{ marginTop: '6px' }}>
+              {supportsFastExport()
+                ? '⚡ Fast export: frames are encoded offline to MP4 (faster than real time, safe in a background tab).'
+                : '⏺ This browser lacks WebCodecs, so export records in real time — keep this tab in front.'}
+            </p>
+
+            {chapters && (
+              <div className="chapters-box">
+                <div className="chapters-head">
+                  <strong>📑 YouTube Chapters</strong>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button type="button" className="ghost small-btn" onClick={() => navigator.clipboard?.writeText(chapters.text)}>
+                      Copy
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost small-btn"
+                      onClick={() => downloadText(chapters.text, `${(projectTitle || 'video').trim().replace(/[^a-zA-Z0-9_\-]/g, '_')}_chapters.txt`)}
+                    >
+                      Download .txt
+                    </button>
+                    <button type="button" className="ghost small-btn" onClick={() => setChapters(null)}>✕</button>
+                  </div>
+                </div>
+                <textarea readOnly rows={Math.min(10, chapters.count + 1)} value={chapters.text} />
+                {chapters.warnings.map((w) => (
+                  <div key={w} className="chapters-warning">⚠ {w}</div>
+                ))}
+              </div>
+            )}
 
             {isExporting && (
               <div className="export-progress-panel">

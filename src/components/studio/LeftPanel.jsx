@@ -58,6 +58,7 @@ export default function LeftPanel({
   const [menuOpen, setMenuOpen] = useState(false);
   const [shapeColor, setShapeColor] = useState(SHAPE_COLORS[0]);
   const imageInputRef = useRef(null);
+  const videoInputRef = useRef(null);
   const bgmInputRef = useRef(null);
   const menuRef = useRef(null);
 
@@ -147,7 +148,8 @@ export default function LeftPanel({
 
   const hiddenInputs = (
     <>
-      <input ref={imageInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleImageFile} />
+      <input ref={imageInputRef} type="file" accept="image/*,video/*" style={{ display: 'none' }} onChange={handleImageFile} />
+      <input ref={videoInputRef} type="file" accept="video/*" style={{ display: 'none' }} onChange={handleImageFile} />
       <input ref={bgmInputRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={handleBgmFile} />
     </>
   );
@@ -157,7 +159,8 @@ export default function LeftPanel({
     const showImages = filter === 'all' || filter === 'images';
     const showAudio = filter === 'all' || filter === 'audio';
     const imageLayers = (project.layers || []).filter(l => l.type === 'image');
-    const hasAny = imageUrls.some(Boolean) || project.audioUrl || project.bgmUrl || imageLayers.length > 0;
+    const videoLayers = (project.layers || []).filter(l => l.type === 'video');
+    const hasAny = imageUrls.some(Boolean) || project.audioUrl || project.bgmUrl || imageLayers.length > 0 || videoLayers.length > 0;
     return (
       <>
         <div className="sp-import-btn-wrap" ref={menuRef}>
@@ -173,6 +176,9 @@ export default function LeftPanel({
             <div className="cs-dropdown-menu">
               <button onClick={() => { setMenuOpen(false); imageInputRef.current?.click(); }}>
                 <Icon name="image" size={15} /> Image overlay
+              </button>
+              <button onClick={() => { setMenuOpen(false); videoInputRef.current?.click(); }}>
+                <Icon name="video" size={15} /> Video clip (B-roll)
               </button>
               <button onClick={() => { setMenuOpen(false); bgmInputRef.current?.click(); }}>
                 <Icon name="music" size={15} /> Background music
@@ -241,6 +247,20 @@ export default function LeftPanel({
             </>
           )}
 
+          {showImages && videoLayers.length > 0 && (
+            <>
+              <div className="sp-media-label">Video clips · {videoLayers.length}</div>
+              <div className="sp-media-grid">
+                {videoLayers.map(l => (
+                  <div key={l.id} className="sp-media-card" onClick={() => onSeek(l.startTime)} title={l.name || 'Video clip'}>
+                    <video src={l.videoUrl} muted preload="metadata" />
+                    <span className="sp-media-badge">{fmt(l.startTime)}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
           {showAudio && (project.audioUrl || project.bgmUrl) && (
             <>
               <div className="sp-media-label">Audio</div>
@@ -276,6 +296,9 @@ export default function LeftPanel({
               </button>
               <button className="sp-tool-btn" onClick={() => imageInputRef.current?.click()}>
                 <Icon name="image" size={14} /> Image Overlay
+              </button>
+              <button className="sp-tool-btn" onClick={() => videoInputRef.current?.click()}>
+                <Icon name="video" size={14} /> Video Clip
               </button>
               <button className="sp-tool-btn" onClick={() => bgmInputRef.current?.click()}>
                 <Icon name="music" size={14} /> BGM Track

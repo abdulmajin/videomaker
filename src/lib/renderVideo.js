@@ -2,8 +2,12 @@
 // Features Canva-style slide animations, kinetic text overlays/retention hooks, BGM mixer, and customizable captions
 
 import { computeSlideTransform, getSlideAnimation } from './animations';
+import { drawKaraokeCaptions, gradeFilter, drawBrand } from './frameExtras';
+import { scheduleSfx } from './sfx';
+import { supportsFastExport, mixAudioOffline, encodeMp4 } from './fastExport';
 
 export const CAPTION_STYLES = [
+  { id: 'karaoke', label: '🎤 Karaoke (Word-by-Word Highlight)' },
   { id: 'modern-card', label: '🪪 Modern Card (Frosted Pill with Badge)' },
   { id: 'social-pop', label: '🔥 Social Pop (TikTok / Reels Bold Yellow)' },
   { id: 'classic-cinema', label: '🎬 Classic Cinema (Clean Drop-Shadow Subtitles)' },
@@ -328,6 +332,11 @@ export function drawVideoFrame({
   textOverlays = {},
   customTextOverlays = [],
   title = '',
+  words = [],
+  colorGrade = 'none',
+  slideFilters = {},
+  brand = null,
+  logoImg = null,
 }) {
   const isVertical = height > width;
 
@@ -372,6 +381,7 @@ export function drawVideoFrame({
 
   // Target image bounding box
   const hasBottomCaptions =
+    captionStyle === 'karaoke' ||
     captionStyle === 'modern-card' ||
     captionStyle === 'social-pop' ||
     captionStyle === 'classic-cinema';
@@ -408,6 +418,7 @@ export function drawVideoFrame({
     ctx.translate(centerX + transform.dx, centerY + transform.dy);
     ctx.scale(transform.scale, transform.scale);
     ctx.globalAlpha = Math.max(0, Math.min(1, transform.opacity));
+    ctx.filter = gradeFilter(colorGrade, slideFilters?.[activeIndex]);
 
     ctx.drawImage(activeImg, -dw / 2, -dh / 2, dw, dh);
     ctx.restore();
@@ -446,12 +457,15 @@ export function drawVideoFrame({
     });
   }
 
-  // 6. Draw Selected Caption Style (clean subtitles)
-  if (captionStyle !== 'none' && activeSlide && activeSlide.text) {
+  // 6. Draw Selected Caption Style (clean subtitles). Karaoke needs word
+  // timestamps; without them it falls back to the Social Pop look.
+  const karaokeDrawn =
+    captionStyle === 'karaoke' && drawKaraokeCaptions(ctx, { width, height, time, words, isVertical });
+  if (captionStyle !== 'none' && !karaokeDrawn && activeSlide && activeSlide.text) {
     drawCaptions(ctx, {
       width,
       height,
-      captionStyle,
+      captionStyle: captionStyle === 'karaoke' ? 'social-pop' : captionStyle,
       slideNumber: activeSlide.id || activeIndex + 1,
       totalSlides: slides.length,
       text: activeSlide.text,
@@ -469,6 +483,9 @@ export function drawVideoFrame({
       overlays: customTextOverlays,
     });
   }
+
+  // 8. Brand kit: logo watermark and end card
+  drawBrand(ctx, { width, height, time, duration, brand, logoImg });
 }
 
 // Custom Multi-Text Overlays Renderer (Decorated text placed at any timestamp & position)
@@ -902,8 +919,59 @@ function drawCaptions(ctx, { width, height, captionStyle, slideNumber, text, isV
   ctx.restore();
 }
 
-// Renders the full video and returns a Blob (with optional BGM and auto-ducking)
-export async function renderVideo({
+// Renders the full video and returns a Blob (with optional BGM and auto-ducking).
+// Uses offline WebCodecs encoding when available, else records in real time.
+export async function renderVideo(options) {
+  if (supportsFastExport() && !options.forceRealtime) {
+    try {
+      return await renderVideoFast(options);
+    } catch (err) {
+      if (err.message === 'Render cancelled') throw err;
+      console.warn('Fast export failed, falling back to real-time recording:', err);
+      options.onProgress?.(0, 'Fast export unavailable — recording in real time…');
+    }
+  }
+  return renderVideoRealtime(options);
+}
+
+async function renderVideoFast({
+  audioFile, rows, slides, imageUrls, duration, title = '',
+  width = 1280, height = 720, fps = 30,
+  animationMode = 'random', slideAnimations = {}, captionStyle = 'modern-card',
+  hookStyle = 'punch-stamp', textOverlays = {}, customTextOverlays = [],
+  bgmFile = null, bgmVolume = 0.15, autoDuck = true,
+  words = [], colorGrade = 'none', slideFilters = {}, brand = null, logoImg = null, sfx = null,
+  onProgress = () => {}, abortSignal = null,
+}) {
+  onProgress(2, 'Preloading slide images…');
+  const preloadedImages = await preloadImages(imageUrls);
+  if (abortSignal?.aborted) throw new Error('Render cancelled');
+
+  onProgress(5, 'Mixing voice, music & sound effects…');
+  const audioBuffer = await mixAudioOffline({
+    voice: audioFile, bgm: bgmFile, bgmVolume, autoDuck, rows, words, duration,
+    sfxOptions: { rows, slides, textOverlays, hookStyle, sfx },
+  });
+  if (abortSignal?.aborted) throw new Error('Render cancelled');
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+
+  const { blob, mimeType, extension } = await encodeMp4({
+    canvas, fps, duration, audioBuffer, onProgress, abortSignal,
+    renderFrame: (time) => drawVideoFrame({
+      ctx, width, height, time, duration, rows, slides, preloadedImages,
+      animationMode, slideAnimations, captionStyle, hookStyle, textOverlays,
+      customTextOverlays, title, words, colorGrade, slideFilters, brand, logoImg,
+    }),
+  });
+  const safeTitle = (title || 'video').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+  return { blob, mimeType, filename: `${safeTitle}.${extension}` };
+}
+
+async function renderVideoRealtime({
   audioFile,
   rows,
   slides,
@@ -922,6 +990,12 @@ export async function renderVideo({
   bgmFile = null,
   bgmVolume = 0.15,
   autoDuck = true,
+  words = [],
+  colorGrade = 'none',
+  slideFilters = {},
+  brand = null,
+  logoImg = null,
+  sfx = null,
   onProgress = () => {},
   abortSignal = null,
 }) {
@@ -1033,6 +1107,9 @@ export async function renderVideo({
     audioSource.start(0);
     if (bgmSource) bgmSource.start(0);
     const audioStartCtxTime = audioContext.currentTime;
+    scheduleSfx(audioContext, audioDestination, {
+      rows, slides, textOverlays, hookStyle, sfx, offset: audioStartCtxTime,
+    });
 
     function renderLoop() {
       if (abortSignal?.aborted) return;
@@ -1072,6 +1149,11 @@ export async function renderVideo({
         textOverlays,
         customTextOverlays,
         title,
+        words,
+        colorGrade,
+        slideFilters,
+        brand,
+        logoImg,
       });
 
       if (elapsed >= duration + 0.25) {

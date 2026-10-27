@@ -2,6 +2,8 @@ import { useRef } from 'react';
 import { Icon } from './icons';
 import { LAYER_ANIMATIONS, TRANSITION_TYPES } from '../../lib/studioRender';
 import { CAPTION_STYLES, HOOK_STYLES } from '../../lib/renderVideo';
+import { COLOR_GRADES } from '../../lib/frameExtras';
+import { SFX_MODES } from '../../lib/sfx';
 import { ANIMATION_TYPES } from '../../lib/animations';
 
 const FONT_FAMILIES = ['system-ui', 'Arial', 'Georgia', 'Courier New', 'Impact', 'Trebuchet MS', 'Verdana'];
@@ -129,7 +131,7 @@ export default function RightPanel({
         <div className="rp-layer-head">
           <span className={`rp-type-badge rp-type-badge--${layer.type}`}>{layer.type}</span>
           <span className="rp-layer-name">
-            {layer.type === 'text' ? (layer.text || 'Text') : layer.type === 'shape' ? (layer.shape || 'Shape') : (layer.name || 'Image')}
+            {layer.type === 'text' ? (layer.text || 'Text') : layer.type === 'shape' ? (layer.shape || 'Shape') : (layer.name || (layer.type === 'video' ? 'Video clip' : 'Image'))}
           </span>
         </div>
 
@@ -233,6 +235,25 @@ export default function RightPanel({
           </Section>
         )}
 
+        {layer.type === 'video' && (
+          <Section title="Video clip">
+            <Row label="Volume" value={layer.muted ? 'Muted' : `${Math.round((layer.volume ?? 1) * 100)}%`}>
+              <input className="rp-range" type="range" min="0" max="100" value={Math.round((layer.volume ?? 1) * 100)}
+                disabled={layer.muted} onChange={e => upd({ volume: parseInt(e.target.value, 10) / 100 })} />
+            </Row>
+            <Row label="Sound">
+              <label className="rp-check">
+                <input type="checkbox" checked={!!layer.muted} onChange={e => upd({ muted: e.target.checked })} />
+                Mute clip audio
+              </label>
+            </Row>
+            <div className="rp-duration">
+              Starts <strong>{(layer.trimStart || 0).toFixed(1)}s</strong> into the source
+              {layer.sourceDuration ? <> · source <strong>{layer.sourceDuration.toFixed(1)}s</strong></> : null}
+            </div>
+          </Section>
+        )}
+
         <Section title="Position & size">
           <div className="rp-grid-2">
             <NumField label="X" suffix="%" value={pct(layer.x)} onChange={v => upd({ x: (v || 0) / 100 })} />
@@ -308,6 +329,22 @@ export default function RightPanel({
             {ANIMATION_TYPES.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
           </select>
         </Row>
+      </Section>
+      <Section title="Color grade">
+        <Row label="All scenes">
+          <select className="rp-select" value={project.colorGrade || 'none'} onChange={e => onUpdateProject({ colorGrade: e.target.value })}>
+            {COLOR_GRADES.map(g => <option key={g.id} value={g.id}>{g.label}</option>)}
+          </select>
+        </Row>
+        {currentSlideIdx >= 0 && (
+          <Row label={`Scene ${currentSlideIdx + 1}`}>
+            <select className="rp-select" value={project.slideFilters?.[currentSlideIdx] || 'auto'}
+              onChange={e => onUpdateProject({ slideFilters: { ...(project.slideFilters || {}), [currentSlideIdx]: e.target.value } })}>
+              <option value="auto">Same as all scenes</option>
+              {COLOR_GRADES.map(g => <option key={g.id} value={g.id}>{g.label}</option>)}
+            </select>
+          </Row>
+        )}
       </Section>
     </>
   );
@@ -387,6 +424,21 @@ export default function RightPanel({
             Lower music under voice
           </label>
         </Row>
+      </Section>
+      <Section title="Sound effects">
+        <Row label="Effects">
+          <select className="rp-select" value={project.sfx?.mode || 'none'}
+            onChange={e => onUpdateProject({ sfx: { volume: 0.6, ...(project.sfx || {}), mode: e.target.value } })}>
+            {SFX_MODES.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </Row>
+        {project.sfx?.mode && project.sfx.mode !== 'none' && (
+          <Row label="Volume" value={`${Math.round((project.sfx.volume ?? 0.6) * 100)}%`}>
+            <input className="rp-range" type="range" min="0" max="100" value={Math.round((project.sfx.volume ?? 0.6) * 100)}
+              onChange={e => onUpdateProject({ sfx: { ...project.sfx, volume: parseInt(e.target.value, 10) / 100 } })} />
+          </Row>
+        )}
+        <div className="rp-duration">Mixed into the exported video.</div>
       </Section>
     </>
   );

@@ -7,6 +7,7 @@ import {
 } from 'react';
 import { Icon } from './icons';
 import { TRANSITION_TYPES } from '../../lib/studioRender';
+import { useWaveform } from '../../lib/waveform';
 
 // ─── Layout constants ───────────────────────────────────────────────────────
 const LABEL_W   = 132;  // px, sticky track-label column
@@ -15,6 +16,7 @@ const LANE_H    = 28;   // px per stacked lane in overlay tracks
 const MIN_ZOOM  = 2;    // px per second
 const MAX_ZOOM  = 400;
 const RULER_STEPS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+const SNAP_PX   = 8;    // snap distance in screen pixels
 
 // ─── Time formatting ────────────────────────────────────────────────────────
 const pad = (n) => String(Math.floor(n)).padStart(2, '0');
@@ -55,11 +57,13 @@ const LAYER_META = {
   text:  { cls: 'text-block',  icon: 'text',   name: 'Text',    add: '+ Add text',    tab: 'text' },
   shape: { cls: 'shape-block', icon: 'square', name: 'Shapes',  add: '+ Add shape',   tab: 'shapes' },
   image: { cls: 'image-block', icon: 'image',  name: 'Overlays', add: '+ Add overlay', tab: 'media' },
+  video: { cls: 'video-block', icon: 'film',   name: 'Clips',    add: '+ Add video clip', tab: 'media' },
 };
 
 function blockLabel(l) {
   if (l.type === 'text') return l.text || 'Text';
   if (l.type === 'shape') return l.shape || 'Shape';
+  if (l.type === 'video') return l.name || 'Video clip';
   return l.name || 'Image overlay';
 }
 
@@ -91,6 +95,8 @@ export default function StudioTimeline({
   const [zoom, setZoom] = useState(20);                 // px per second
   const [transitionMenu, setTransitionMenu] = useState(null); // { index, x, y }
   const [trimFeedback, setTrimFeedback] = useState(null); // { index, mode, newDur, delta }
+  const [snapOn, setSnapOn] = useState(true);
+  const [snapGuide, setSnapGuide] = useState(null);       // time of the active snap line
 
   // ── Refs ───────────────────────────────────────────────────────────────────
   const scrollRef    = useRef(null);
@@ -170,15 +176,21 @@ export default function StudioTimeline({
   const handleBlockMouseDown = useCallback((e, layer, mode) => {
     e.stopPropagation();
     if (e.button !== 0) return;
+    const snapTargets = [0, duration, currentTime, ...rows.map(r => r.start ?? 0)];
+    for (const l of layers) if (l.id !== layer.id) snapTargets.push(l.startTime, l.endTime);
     blockDragRef.current = {
       layerId:   layer.id,
       mode,                       // 'move' | 'trim-start' | 'trim-end'
       startX:    e.clientX,
       startTime: layer.startTime,
       endTime:   layer.endTime,
+      isVideo:   layer.type === 'video',
+      trimStart: layer.trimStart || 0,
+      sourceDuration: layer.sourceDuration || 0,
+      snapTargets,
     };
     onSelectLayer(layer.id);
-  }, [onSelectLayer]);
+  }, [onSelectLayer, duration, currentTime, rows, layers]);
 
   // ── Scene trim start (video track slides with auto gap-closing ripple) ─────
   const handleSceneTrimStart = useCallback((e, index, mode) => {
@@ -280,17 +292,50 @@ export default function StudioTimeline({
         return;
       }
 
-      // 3. Overlay layer drag & trim
+      // 3. Overlay layer drag & trim (snaps to playhead, scene cuts and other layers; Alt bypasses)
       const bd = blockDragRef.current;
       if (!bd) return;
       const dt  = (e.clientX - bd.startX) / zoom;
       const dur = bd.endTime - bd.startTime;
+      const snapping = snapOn && !e.altKey;
+      const tol = SNAP_PX / zoom;
+      const snap = (t) => {
+        if (!snapping) return { t, hit: null };
+        let best = null;
+        for (const c of bd.snapTargets) {
+          if (Math.abs(c - t) <= tol && (best === null || Math.abs(c - t) < Math.abs(best - t))) best = c;
+        }
+        return best === null ? { t, hit: null } : { t: best, hit: best };
+      };
       if (bd.mode === 'trim-end') {
-        onUpdateLayer(bd.layerId, { endTime: Math.max(bd.startTime + 0.2, Math.min(duration, bd.endTime + dt)) });
+        const { t, hit } = snap(bd.endTime + dt);
+        setSnapGuide(hit);
+        let endTime = Math.max(bd.startTime + 0.2, Math.min(duration, t));
+        // A clip can't run past the end of its source video
+        if (bd.isVideo && bd.sourceDuration) endTime = Math.min(endTime, bd.startTime + bd.sourceDuration - bd.trimStart);
+        onUpdateLayer(bd.layerId, { endTime });
       } else if (bd.mode === 'trim-start') {
-        onUpdateLayer(bd.layerId, { startTime: Math.max(0, Math.min(bd.endTime - 0.2, bd.startTime + dt)) });
+        const { t, hit } = snap(bd.startTime + dt);
+        setSnapGuide(hit);
+        let startTime = Math.max(0, Math.min(bd.endTime - 0.2, t));
+        if (bd.isVideo) {
+          // Trimming the head of a clip also moves where playback starts in the source
+          startTime = Math.max(startTime, bd.startTime - bd.trimStart);
+          onUpdateLayer(bd.layerId, { startTime, trimStart: Math.max(0, bd.trimStart + (startTime - bd.startTime)) });
+        } else {
+          onUpdateLayer(bd.layerId, { startTime });
+        }
       } else {
-        const newStart = Math.max(0, Math.min(duration - dur, bd.startTime + dt));
+        let newStart = Math.max(0, Math.min(duration - dur, bd.startTime + dt));
+        const a = snap(newStart), b = snap(newStart + dur);
+        if (a.hit !== null && (b.hit === null || Math.abs(a.t - newStart) <= Math.abs(b.t - newStart - dur))) {
+          newStart = a.t; setSnapGuide(a.hit);
+        } else if (b.hit !== null) {
+          newStart = b.t - dur; setSnapGuide(b.hit);
+        } else {
+          setSnapGuide(null);
+        }
+        newStart = Math.max(0, Math.min(duration - dur, newStart));
         onUpdateLayer(bd.layerId, { startTime: newStart, endTime: newStart + dur });
       }
     };
@@ -300,6 +345,7 @@ export default function StudioTimeline({
       blockDragRef.current = null;
       sceneTrimRef.current = null;
       setTrimFeedback(null);
+      setSnapGuide(null);
     };
 
     window.addEventListener('mousemove', onMove);
@@ -308,7 +354,7 @@ export default function StudioTimeline({
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [zoom, duration, onSeek, onUpdateLayer, onUpdateRowsAndDuration, timeFromEvent]);
+  }, [zoom, duration, snapOn, onSeek, onUpdateLayer, onUpdateRowsAndDuration, timeFromEvent]);
 
   // Close transition menu on outside click
   useEffect(() => {
@@ -319,7 +365,7 @@ export default function StudioTimeline({
   }, [transitionMenu]);
 
   // ── Layer groups ───────────────────────────────────────────────────────────
-  const groups = ['text', 'shape', 'image'].map(type => {
+  const groups = ['video', 'text', 'shape', 'image'].map(type => {
     const list = layers.filter(l => l.type === type);
     return { type, list, ...assignLanes(list) };
   });
@@ -364,6 +410,7 @@ export default function StudioTimeline({
                 <div className="tl-trim tl-trim--start" onMouseDown={(e) => handleBlockMouseDown(e, layer, 'trim-start')} />
                 {type === 'image' && layer.imageUrl && <img className="tl-block-thumb" src={layer.imageUrl} alt="" />}
                 {type === 'text' && <span className="tl-block-glyph">T</span>}
+                {type === 'video' && <Icon name="film" size={12} />}
                 <span className="tl-block-text">{blockLabel(layer)}</span>
                 <div className="tl-trim tl-trim--end" onMouseDown={(e) => handleBlockMouseDown(e, layer, 'trim-end')} />
               </div>
@@ -375,6 +422,9 @@ export default function StudioTimeline({
   };
 
   const bars = Math.min(900, Math.floor(timelineWidth / 5));
+  const voiceWave = useWaveform(audioUrl, bars, duration);
+  const bgmWave = useWaveform(bgmUrl, bars, duration, true);
+  const waveBar = (wave, i, fallback) => (wave ? Math.max(0.04, wave[i]) : fallback);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -414,6 +464,13 @@ export default function StudioTimeline({
         </div>
 
         <div className="transport-right">
+          <button
+            className={`transport-btn${snapOn ? ' active' : ''}`}
+            onClick={() => setSnapOn(v => !v)}
+            title={snapOn ? 'Snapping on: edges snap to playhead, cuts and layers (hold Alt to bypass)' : 'Snapping off'}
+          >
+            <Icon name="magnet" />
+          </button>
           <button className="transport-btn" onClick={() => zoomBy(1 / 1.4)} title="Zoom out (Ctrl+wheel)">
             <Icon name="zoomOut" />
           </button>
@@ -571,7 +628,7 @@ export default function StudioTimeline({
                     <span className="tl-block-text tl-audio-name">Voiceover narration</span>
                     <div className="tl-wave">
                       {Array.from({ length: bars }, (_, i) => (
-                        <i key={i} style={{ height: `${Math.round(waveHeight(i) * 100)}%` }} />
+                        <i key={i} style={{ height: `${Math.round(waveBar(voiceWave, i, waveHeight(i) * 0.3) * 100)}%` }} />
                       ))}
                     </div>
                   </div>
@@ -594,7 +651,7 @@ export default function StudioTimeline({
                     <span className="tl-block-text tl-audio-name">{bgmName || 'Background music'}</span>
                     <div className="tl-wave tl-wave--soft">
                       {Array.from({ length: bars }, (_, i) => (
-                        <i key={i} style={{ height: `${Math.round((0.35 + 0.4 * waveHeight(i + 7)) * 100)}%` }} />
+                        <i key={i} style={{ height: `${Math.round(waveBar(bgmWave, i, 0.15) * 100)}%` }} />
                       ))}
                     </div>
                   </div>
@@ -605,6 +662,9 @@ export default function StudioTimeline({
                 )}
               </div>
             </div>
+
+            {/* Snap guide */}
+            {snapGuide !== null && <div className="tl-snap-guide" style={{ left: LABEL_W + snapGuide * zoom }} />}
 
             {/* Playhead line */}
             <div className="tl-playhead" style={{ left: LABEL_W + currentTime * zoom }} />

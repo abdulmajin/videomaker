@@ -7,6 +7,7 @@
  */
 
 import { computeSlideTransform, getSlideAnimation } from './animations.js';
+import { drawKaraokeCaptions, gradeFilter, drawBrand } from './frameExtras.js';
 
 // ─── Exported constants ────────────────────────────────────────────────────────
 
@@ -101,27 +102,67 @@ export async function preloadStudioImages(imageUrls) {
   );
 }
 
-export async function preloadLayerImages(layers) {
+// Media elements are cached by URL so dragging a layer doesn't reload it.
+// Pass your own `cache` (e.g. for export) to get elements nobody else drives.
+const sharedMediaCache = new Map(); // url -> Promise<HTMLImageElement|HTMLVideoElement|null>
+
+function loadMedia(url, isVideo) {
+  return new Promise((resolve) => {
+    if (isVideo) {
+      const v = document.createElement('video');
+      v.preload = 'auto';
+      v.playsInline = true;
+      v.muted = true;
+      v.crossOrigin = 'anonymous';
+      v.onloadeddata = () => resolve(v);
+      v.onerror = () => resolve(null);
+      v.src = url;
+      v.load();
+    } else {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = url;
+    }
+  });
+}
+
+export async function preloadLayerImages(layers, cache = sharedMediaCache) {
   const entries = await Promise.all(
     (layers || [])
-      .filter((l) => l.type === 'image' && l.imageUrl)
-      .map(
-        (l) =>
-          new Promise((resolve) => {
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            img.onload = () => resolve([l.id, img]);
-            img.onerror = () => resolve([l.id, null]);
-            img.src = l.imageUrl;
-          })
-      )
+      .filter((l) => (l.type === 'image' && l.imageUrl) || (l.type === 'video' && l.videoUrl))
+      .map(async (l) => {
+        const url = l.type === 'video' ? l.videoUrl : l.imageUrl;
+        if (!cache.has(url)) cache.set(url, loadMedia(url, l.type === 'video'));
+        return [l.id, await cache.get(url)];
+      })
   );
-  return new Map(entries.filter(Boolean));
+  return new Map(entries);
+}
+
+/** Seeks every visible video layer to its frame for `time` and waits for the seeks. */
+export async function seekVideoLayers(layers, mediaMap, time) {
+  const waits = [];
+  for (const l of layers || []) {
+    if (l.type !== 'video') continue;
+    const v = mediaMap.get(l.id);
+    if (!v || time < l.startTime || time >= l.endTime) continue;
+    const target = Math.min(Math.max(0, v.duration - 0.05), time - l.startTime + (l.trimStart || 0));
+    if (Math.abs(v.currentTime - target) < 0.001) continue;
+    waits.push(new Promise((resolve) => {
+      const done = () => { v.removeEventListener('seeked', done); clearTimeout(timer); resolve(); };
+      const timer = setTimeout(done, 1500);
+      v.addEventListener('seeked', done);
+      v.currentTime = target;
+    }));
+  }
+  await Promise.all(waits);
 }
 
 // ─── Slide image drawing helper ───────────────────────────────────────────────
 
-function drawSlideImage({ ctx, img, activeIndex, activeSlide, animType, slideStart, slideDuration, time, width, height, captionAreaReserved }) {
+function drawSlideImage({ ctx, img, activeIndex, activeSlide, animType, slideStart, slideDuration, time, width, height, captionAreaReserved, filter = 'none' }) {
   const isVertical = height > width;
   const maxImgHeight = isVertical ? height * 0.58 : captionAreaReserved ? height * 0.72 : height * 0.88;
   const maxImgWidth  = isVertical ? width * 0.96 : width * 0.94;
@@ -141,6 +182,7 @@ function drawSlideImage({ ctx, img, activeIndex, activeSlide, animType, slideSta
     ctx.translate(centerX + transform.dx, centerY + transform.dy);
     ctx.scale(transform.scale, transform.scale);
     ctx.globalAlpha = Math.max(0, Math.min(1, transform.opacity));
+    ctx.filter = filter;
     ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
   } else {
     ctx.translate(centerX + transform.dx, centerY + transform.dy);
@@ -296,7 +338,7 @@ function drawLayer(ctx, layer, time, width, height, layerImgMap) {
   }
   if (layer.type === 'text') drawTextLayer(ctx, layer, ap, px, py, pw, ph, cx, cy, width);
   else if (layer.type === 'shape') drawShapeLayer(ctx, layer, ap, px, py, pw, ph, cx, cy);
-  else if (layer.type === 'image') drawImageLayer(ctx, layer, layerImgMap ? layerImgMap.get(layer.id) : null, ap, px, py, pw, ph, cx, cy);
+  else if (layer.type === 'image' || layer.type === 'video') drawImageLayer(ctx, layer, layerImgMap ? layerImgMap.get(layer.id) : null, ap, px, py, pw, ph, cx, cy);
   ctx.restore();
 }
 
@@ -369,16 +411,18 @@ function drawImageLayer(ctx, layer, img, ap, px, py, pw, ph, cx, cy) {
   const opacity = layer.animation === 'fade-in' ? ap * (layer.opacity ?? 1) : (layer.opacity ?? 1);
   ctx.save();
   ctx.globalAlpha = Math.max(0, Math.min(1, opacity));
-  if (img && img.naturalWidth) {
-    const ratio = Math.min(pw / img.naturalWidth, ph / img.naturalHeight);
-    const dw = img.naturalWidth * ratio, dh = img.naturalHeight * ratio;
+  const iw = img ? (img.naturalWidth || img.videoWidth) : 0;
+  const ih = img ? (img.naturalHeight || img.videoHeight) : 0;
+  if (iw && ih) {
+    const ratio = Math.min(pw / iw, ph / ih);
+    const dw = iw * ratio, dh = ih * ratio;
     ctx.drawImage(img, cx - dw / 2, cy - dh / 2, dw, dh);
   } else {
     ctx.fillStyle = 'rgba(30,41,59,0.7)';
     drawRoundedRect(ctx, px, py, pw, ph, 8); ctx.fill();
     ctx.fillStyle = '#64748b'; ctx.font = '600 14px system-ui';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('🖼 Image', cx, cy);
+    ctx.fillText(layer.type === 'video' ? '🎬 Video' : '🖼 Image', cx, cy);
   }
   ctx.restore();
 }
@@ -397,6 +441,11 @@ export function drawStudioFrame({
   textOverlays = {},
   layers = [],
   transitions = {},
+  words = [],
+  colorGrade = 'none',
+  slideFilters = {},
+  brand = null,
+  logoImg = null,
 }) {
   const isVertical = height > width;
 
@@ -405,10 +454,15 @@ export function drawStudioFrame({
   ctx.fillRect(0, 0, width, height);
 
   if (!rows || rows.length === 0) {
+    // No scenes: still composite layers (e.g. a clips-only project)
     ctx.fillStyle = '#1e293b'; ctx.fillRect(0, 0, width, height);
-    ctx.fillStyle = '#475569'; ctx.font = `600 ${Math.round(width * 0.02)}px system-ui`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('No slides — Import from Video Maker to get started', width / 2, height / 2);
+    if (!layers || layers.length === 0) {
+      ctx.fillStyle = '#475569'; ctx.font = `600 ${Math.round(width * 0.02)}px system-ui`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('No slides — Import from Video Maker to get started', width / 2, height / 2);
+    }
+    drawVisibleLayers(ctx, layers, time, width, height, preloadedLayerImages);
+    drawBrand(ctx, { width, height, time, duration, brand, logoImg });
     return;
   }
 
@@ -441,13 +495,13 @@ export function drawStudioFrame({
     const pSlide = slides[prevIdx];
     const pOverride = slideAnimations[prevIdx];
     const pMode  = pOverride && pOverride !== 'auto' ? pOverride : animationMode;
-    drawSlideImage({ ctx, img: pImg, activeIndex: prevIdx, activeSlide: pSlide, animType: getSlideAnimation(pMode, prevIdx), slideStart: pStart, slideDuration: pDur, time: pStart + pDur * 0.99, width, height, captionAreaReserved: hasCaptions });
+    drawSlideImage({ ctx, img: pImg, activeIndex: prevIdx, activeSlide: pSlide, animType: getSlideAnimation(pMode, prevIdx), slideStart: pStart, slideDuration: pDur, time: pStart + pDur * 0.99, width, height, captionAreaReserved: hasCaptions, filter: gradeFilter(colorGrade, slideFilters[prevIdx]) });
   };
 
   const drawActiveEntering = () => {
     const override = slideAnimations[activeIndex];
     const mode = override && override !== 'auto' ? override : animationMode;
-    drawSlideImage({ ctx, img: activeImg, activeIndex, activeSlide, animType: getSlideAnimation(mode, activeIndex), slideStart, slideDuration: slideDur, time: slideStart, width, height, captionAreaReserved: hasCaptions });
+    drawSlideImage({ ctx, img: activeImg, activeIndex, activeSlide, animType: getSlideAnimation(mode, activeIndex), slideStart, slideDuration: slideDur, time: slideStart, width, height, captionAreaReserved: hasCaptions, filter: gradeFilter(colorGrade, slideFilters[activeIndex]) });
   };
 
   if (inTransition) {
@@ -478,7 +532,7 @@ export function drawStudioFrame({
   } else {
     const override = slideAnimations[activeIndex];
     const mode = override && override !== 'auto' ? override : animationMode;
-    drawSlideImage({ ctx, img: activeImg, activeIndex, activeSlide, animType: getSlideAnimation(mode, activeIndex), slideStart, slideDuration: slideDur, time, width, height, captionAreaReserved: hasCaptions });
+    drawSlideImage({ ctx, img: activeImg, activeIndex, activeSlide, animType: getSlideAnimation(mode, activeIndex), slideStart, slideDuration: slideDur, time, width, height, captionAreaReserved: hasCaptions, filter: gradeFilter(colorGrade, slideFilters[activeIndex]) });
   }
 
   // Retention hook
@@ -487,16 +541,21 @@ export function drawStudioFrame({
     drawRetentionHook(ctx, { width, height, time, slideStart, text: rawOverlay.trim(), style: hookStyle, isVertical });
   }
 
-  // Captions
-  if (hasCaptions) {
-    drawCaptions(ctx, { width, height, captionStyle, slideNumber: activeSlide.id || activeIndex + 1, totalSlides: slides.length, text: activeSlide.text, isVertical });
+  // Captions (karaoke falls back to Social Pop when there are no word timestamps)
+  const karaokeDrawn = captionStyle === 'karaoke' && drawKaraokeCaptions(ctx, { width, height, time, words, isVertical });
+  if (hasCaptions && !karaokeDrawn) {
+    drawCaptions(ctx, { width, height, captionStyle: captionStyle === 'karaoke' ? 'social-pop' : captionStyle, slideNumber: activeSlide.id || activeIndex + 1, totalSlides: slides.length, text: activeSlide.text, isVertical });
   }
 
-  // Overlay layers
+  drawVisibleLayers(ctx, layers, time, width, height, preloadedLayerImages);
+  drawBrand(ctx, { width, height, time, duration, brand, logoImg });
+}
+
+function drawVisibleLayers(ctx, layers, time, width, height, mediaMap) {
   const visibleLayers = (layers || [])
     .filter((l) => time >= l.startTime && time < l.endTime)
     .sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
   for (const layer of visibleLayers) {
-    drawLayer(ctx, layer, time, width, height, preloadedLayerImages);
+    drawLayer(ctx, layer, time, width, height, mediaMap);
   }
 }

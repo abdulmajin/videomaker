@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { getSlideAnimation } from '../lib/animations';
+import { COLOR_GRADES } from '../lib/frameExtras';
 
 const fmt = (s) => {
   if (isNaN(s) || s < 0) s = 0;
@@ -21,6 +22,8 @@ export default function SlideEllipseDrawer({
   slidePrompts = {},
   textOverlays = {},
   onSetSlideAnimation = () => {},
+  slideFilters = {},
+  onSetSlideFilter = null,
   onSetSlidePrompt = () => {},
   onSetTextOverlay = () => {},
   onGenerateSlideImage = () => {},
@@ -178,6 +181,23 @@ export default function SlideEllipseDrawer({
                       <option value="pan-drift">🌊 Soft Pan Settle</option>
                     </select>
                   </div>
+
+                  {/* Per-slide colour grade (overrides the project grade) */}
+                  {onSetSlideFilter && (
+                    <div className="ellipse-anim-select-box" onClick={(e) => e.stopPropagation()}>
+                      <label className="ellipse-select-label">Color Grade:</label>
+                      <select
+                        className="ellipse-select-input"
+                        value={slideFilters[i] || 'auto'}
+                        onChange={(e) => onSetSlideFilter(i, e.target.value)}
+                      >
+                        <option value="auto">🎨 Project Default</option>
+                        {COLOR_GRADES.map((g) => (
+                          <option key={g.id} value={g.id}>{g.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   {/* Retention Hook / Text Overlay Input */}
                   <div className="ellipse-hook-box" onClick={(e) => e.stopPropagation()}>
