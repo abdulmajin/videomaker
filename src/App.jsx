@@ -225,6 +225,7 @@ export default function App() {
   const mergedCanvasRef = useRef(null);
   const mergedAnimFrameRef = useRef(null);
   const preloadedMergedImagesRef = useRef([]);
+  const [mergedImagesReady, setMergedImagesReady] = useState(0);
   const abortControllerRef = useRef(null);
   const loadFileInputRef = useRef(null);
 
@@ -452,7 +453,9 @@ export default function App() {
     if (!mergedData?.effectiveImageUrls) return;
     let active = true;
     preloadImages(mergedData.effectiveImageUrls).then((imgs) => {
-      if (active) preloadedMergedImagesRef.current = imgs;
+      if (!active) return;
+      preloadedMergedImagesRef.current = imgs;
+      setMergedImagesReady((n) => n + 1);
     });
     return () => {
       active = false;
@@ -488,7 +491,7 @@ export default function App() {
         logoImg,
       });
     },
-    [mergedData, animationMode, captionStyle, hookStyle, colorGrade, brand, logoImg]
+    [mergedData, animationMode, captionStyle, hookStyle, colorGrade, brand, logoImg, mergedImagesReady] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   // Playback loop for master merged video
@@ -858,16 +861,21 @@ export default function App() {
   const isVertical = aspectRatio === '9:16';
 
   // ── Open merged project in Studio ─────────────────────────────────────────
-  const handleOpenInStudio = () => {
-    if (!mergedData) return;
+  // Which merged data the Studio was last opened with (so edits trigger a fresh hand-off)
+  const studioSourceRef = useRef(null);
+
+  const handleOpenInStudio = (source) => {
+    const data = source && source.rows ? source : mergedData;
+    if (!data) return;
+    studioSourceRef.current = data;
     setStudioInitialProject({
       name: projectTitle || 'Untitled project',
       aspectRatio,
-      duration: mergedData.duration,
-      rows: mergedData.rows,
-      slides: mergedData.slides,
-      imageUrls: mergedData.effectiveImageUrls,
-      audioUrl: mergedData.audioUrl,
+      duration: data.duration,
+      rows: data.rows,
+      slides: data.slides,
+      imageUrls: data.effectiveImageUrls,
+      audioUrl: data.audioUrl,
       bgmUrl: bgmUrl || null,
       bgmName: bgmFile?.name || '',
       bgmVolume,
@@ -875,14 +883,14 @@ export default function App() {
       animationMode,
       captionStyle,
       hookStyle,
-      slideAnimations: mergedData.slideAnimations || {},
-      textOverlays: mergedData.textOverlays || {},
+      slideAnimations: data.slideAnimations || {},
+      textOverlays: data.textOverlays || {},
       // Text overlays placed in the Maker become editable Studio text layers
-      layers: overlaysToStudioLayers(mergedData.customTextOverlays || []),
+      layers: overlaysToStudioLayers(data.customTextOverlays || []),
       transitions: {},
-      words: mergedData.words || [],
+      words: data.words || [],
       colorGrade,
-      slideFilters: mergedData.slideFilters || {},
+      slideFilters: data.slideFilters || {},
       brand: { ...brand, logoFile: null },
       logoUrl,
       sfx,
@@ -891,6 +899,25 @@ export default function App() {
       _openedAt: Date.now(),
     });
     setPage('studio');
+  };
+
+  // Top nav "Studio Editor": always show the current project. Merges first when
+  // sections are aligned but haven't been merged yet (e.g. right after loading a file).
+  const handleGoToStudio = async () => {
+    let data = mergedData;
+    if (!data && sections.some(isReadySection)) {
+      try {
+        setSaveNotice('⏳ Merging sections for the Studio…');
+        data = await mergeSections(sections);
+        setMergedData(data);
+        setSaveNotice('');
+      } catch (err) {
+        setSaveNotice(`⚠ Could not merge sections: ${err.message}`);
+        setTimeout(() => setSaveNotice(''), 5000);
+      }
+    }
+    if (data && studioSourceRef.current !== data) handleOpenInStudio(data);
+    else setPage('studio');
   };
 
   // ── Studio Page ────────────────────────────────────────────────────────────
@@ -917,10 +944,7 @@ export default function App() {
         <button
           type="button"
           className={`app-nav-pill ${page === 'studio' ? 'active' : ''}`}
-          onClick={() => {
-            if (!studioInitialProject && mergedData) handleOpenInStudio();
-            else setPage('studio');
-          }}
+          onClick={handleGoToStudio}
         >
           🎬 Studio Editor
         </button>
@@ -1422,7 +1446,7 @@ export default function App() {
               <button
                 type="button"
                 className="primary-btn"
-                onClick={handleOpenInStudio}
+                onClick={() => handleOpenInStudio()}
                 title="Open this merged video in the full Studio Editor"
               >
                 🎬 Open in Studio Editor

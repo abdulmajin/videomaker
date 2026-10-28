@@ -57,6 +57,8 @@ export default function SectionEditor({
   const canvasRef = useRef(null);
   const animFrameRef = useRef(null);
   const preloadedImagesRef = useRef([]);
+  // Bumped when slide images finish decoding so the paused preview redraws with them
+  const [imagesReady, setImagesReady] = useState(0);
 
   // Compute slides and image URLs for this section
   const slides = useMemo(() => parseScript(section.scriptText || ''), [section.scriptText]);
@@ -94,7 +96,9 @@ export default function SectionEditor({
   useEffect(() => {
     let active = true;
     preloadImages(effectiveImageUrls).then((imgs) => {
-      if (active) preloadedImagesRef.current = imgs;
+      if (!active) return;
+      preloadedImagesRef.current = imgs;
+      setImagesReady((n) => n + 1);
     });
     return () => {
       active = false;
@@ -134,6 +138,7 @@ export default function SectionEditor({
       section.words,
       section.slideFilters,
       look,
+      imagesReady,
       section.rows,
       section.duration,
       slides,
