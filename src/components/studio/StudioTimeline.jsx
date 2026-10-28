@@ -17,6 +17,12 @@ const MIN_ZOOM  = 2;    // px per second
 const MAX_ZOOM  = 400;
 const RULER_STEPS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
 const SNAP_PX   = 8;    // snap distance in screen pixels
+const TL_HEIGHT_KEY = 'studioTimelineHeight';
+const TL_MIN_H  = 110;  // px; the canvas monitor gets whatever space is left
+
+function storedTimelineHeight() {
+  try { const v = parseInt(localStorage.getItem(TL_HEIGHT_KEY), 10); return Number.isFinite(v) ? v : 240; } catch { return 240; }
+}
 
 // ─── Time formatting ────────────────────────────────────────────────────────
 const pad = (n) => String(Math.floor(n)).padStart(2, '0');
@@ -98,6 +104,32 @@ export default function StudioTimeline({
   const [trimFeedback, setTrimFeedback] = useState(null); // { index, mode, newDur, delta }
   const [snapOn, setSnapOn] = useState(true);
   const [snapGuide, setSnapGuide] = useState(null);       // time of the active snap line
+  const [tlHeight, setTlHeight] = useState(storedTimelineHeight);
+  const splitRef = useRef(null);
+
+  // Divider between the canvas monitor and the timeline (drag to resize; double-click resets)
+  const onSplitDown = (e) => {
+    e.preventDefault();
+    splitRef.current = { y: e.clientY, h: tlHeight };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onSplitMove = (e) => {
+    const d = splitRef.current;
+    if (!d) return;
+    const maxH = Math.max(TL_MIN_H, window.innerHeight - 52 - 48 - 160); // keep >=160px of canvas
+    d.last = Math.max(TL_MIN_H, Math.min(maxH, d.h - (e.clientY - d.y)));
+    setTlHeight(d.last);
+  };
+  const onSplitUp = () => {
+    const d = splitRef.current;
+    if (!d) return;
+    splitRef.current = null;
+    try { localStorage.setItem(TL_HEIGHT_KEY, String(d.last ?? d.h)); } catch { /* not remembered */ }
+  };
+  const resetSplit = () => {
+    setTlHeight(240);
+    try { localStorage.removeItem(TL_HEIGHT_KEY); } catch { /* ignore */ }
+  };
 
   // ── Refs ───────────────────────────────────────────────────────────────────
   const scrollRef    = useRef(null);
@@ -430,6 +462,17 @@ export default function StudioTimeline({
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <>
+      {/* ── Resize divider: drag up for a bigger canvas ── */}
+      <div
+        className="studio-split-handle"
+        title="Drag to resize the canvas and timeline (double-click to reset)"
+        onPointerDown={onSplitDown}
+        onPointerMove={onSplitMove}
+        onPointerUp={onSplitUp}
+        onPointerCancel={onSplitUp}
+        onDoubleClick={resetSplit}
+      />
+
       {/* ── Playback transport ── */}
       <div className="studio-transport">
         <div className="transport-left">
@@ -485,7 +528,7 @@ export default function StudioTimeline({
       </div>
 
       {/* ── Multi-track timeline ── */}
-      <div className="studio-timeline">
+      <div className="studio-timeline" style={{ height: tlHeight }}>
         <div className="timeline-scroll-area tl-scroll" ref={scrollRef}>
           <div className="tl-content" style={{ width: LABEL_W + timelineWidth + END_PAD }}>
             {/* Ruler row (sticky top) */}

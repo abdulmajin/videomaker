@@ -30,6 +30,7 @@ import TextOverlayEditorModal from './components/TextOverlayEditorModal';
 import VideoTextCanvasInteractiveLayer from './components/VideoTextCanvasInteractiveLayer';
 import StudioPage from './pages/StudioPage';
 import RecoveryBanner, { autosaveLabel } from './components/RecoveryBanner';
+import ResizablePreview from './components/ResizablePreview';
 import { getSnapshotInfo, loadSnapshot, deleteSnapshot } from './lib/autosave';
 import { useAutosave } from './lib/useAutosave';
 import { useUndoHistory } from './lib/useUndoHistory';
@@ -1459,7 +1460,7 @@ export default function App() {
           </p>
 
           {/* Master Canvas Video Preview */}
-          <div className={`video-player-frame ${isVertical ? 'vertical-frame' : ''}`}>
+          <ResizablePreview isVertical={isVertical} className={`video-player-frame ${isVertical ? 'vertical-frame' : ''}`}>
             <canvas
               ref={mergedCanvasRef}
               width={isVertical ? 720 : 1280}
@@ -1483,7 +1484,7 @@ export default function App() {
               }}
               isVertical={isVertical}
             />
-          </div>
+          </ResizablePreview>
 
           {/* Hidden Audio Players for Merged Playback */}
           {mergedData.audioUrl && (

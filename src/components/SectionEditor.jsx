@@ -11,6 +11,7 @@ import SlideEllipseDrawer from './SlideEllipseDrawer';
 import TextOverlayEditorModal from './TextOverlayEditorModal';
 import VideoTextCanvasInteractiveLayer from './VideoTextCanvasInteractiveLayer';
 import TranscriptReview from './TranscriptReview';
+import ResizablePreview from './ResizablePreview';
 
 const fmt = (s) => {
   if (isNaN(s) || s < 0) s = 0;
@@ -738,7 +739,7 @@ export default function SectionEditor({
                 <span className="badge badge-info">Preview Only</span>
               </div>
 
-              <div className={`video-player-frame section-frame ${isVertical ? 'vertical-frame' : ''}`}>
+              <ResizablePreview isVertical={isVertical} className={`video-player-frame section-frame ${isVertical ? 'vertical-frame' : ''}`}>
                 <canvas
                   ref={canvasRef}
                   width={isVertical ? 720 : 1280}
@@ -762,7 +763,7 @@ export default function SectionEditor({
                   }}
                   isVertical={isVertical}
                 />
-              </div>
+              </ResizablePreview>
 
               {/* Section Timeline */}
               <VisualTimeline

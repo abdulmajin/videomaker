@@ -2360,3 +2360,27 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 .save-notice { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Canvas / timeline divider */
+.studio-split-handle {
+  height: 7px;
+  flex-shrink: 0;
+  cursor: ns-resize;
+  touch-action: none;
+  background: var(--cs-surface);
+  border-top: 1px solid var(--cs-border);
+  position: relative;
+}
+.studio-split-handle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 44px;
+  height: 3px;
+  margin-left: -22px;
+  border-radius: 3px;
+  background: var(--cs-border-light);
+  transition: background 0.15s;
+}
+.studio-split-handle:hover::after { background: var(--cs-brand); }
