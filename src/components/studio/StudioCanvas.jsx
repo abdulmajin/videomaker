@@ -32,6 +32,23 @@ const HANDLES = [
 
 const HANDLE_SIZE = 10; // px
 const STAGE_PADDING = 48; // px of breathing room around the stage
+// Display zoom of the stage, as % of the render resolution (100% = 1280px wide).
+// It only scales how the canvas is shown; render/export resolution never changes.
+const ZOOM_KEY = 'studioStageZoom';
+const ZOOM_MIN = 15;
+const ZOOM_MAX = 300;
+const ZOOM_PRESETS = [50, 100, 150];
+
+function storedZoom() {
+  try {
+    const v = localStorage.getItem(ZOOM_KEY);
+    if (v === null || v === 'fit') return 'fit';
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : 'fit';
+  } catch {
+    return 'fit';
+  }
+}
 
 function layerLabel(layer) {
   if (!layer) return '';
@@ -88,11 +105,50 @@ export default function StudioCanvas({
 
   const availW = Math.max(120, areaSize.w - STAGE_PADDING * 2);
   const availH = Math.max(80, areaSize.h - STAGE_PADDING * 2);
-  let stageW = availW;
-  let stageH = stageW / ratio;
-  if (stageH > availH) { stageH = availH; stageW = stageH * ratio; }
-  stageW = Math.floor(stageW);
-  stageH = Math.floor(stageH);
+  let fitW = availW;
+  if (fitW / ratio > availH) fitW = availH * ratio;
+  const fitPct = (fitW / renderW) * 100;
+
+  const [zoom, setZoomState] = useState(storedZoom); // 'fit' | percent
+  const setZoom = useCallback((z) => {
+    const next = z === 'fit' ? 'fit' : Math.round(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z)));
+    setZoomState(next);
+    try { localStorage.setItem(ZOOM_KEY, String(next)); } catch { /* not remembered */ }
+  }, []);
+  const zoomPct = zoom === 'fit' ? fitPct : zoom;
+
+  const stageW = Math.floor(zoom === 'fit' ? fitW : (renderW * zoom) / 100);
+  const stageH = Math.floor(stageW / ratio);
+
+  // Ctrl / Cmd + wheel over the canvas area zooms the stage
+  useEffect(() => {
+    const el = areaRef.current;
+    if (!el) return undefined;
+    const onWheel = (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      setZoom(zoomPctRef.current * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [setZoom]);
+  const zoomPctRef = useRef(zoomPct);
+  zoomPctRef.current = zoomPct;
+
+  // Corner drag handle: width follows the pointer (stage is centred, so x2)
+  const zoomDragRef = useRef(null);
+  const onZoomHandleDown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    zoomDragRef.current = { x: e.clientX, w: stageW };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onZoomHandleMove = (e) => {
+    const d = zoomDragRef.current;
+    if (!d) return;
+    setZoom(((d.w + (e.clientX - d.x) * 2) / renderW) * 100);
+  };
+  const onZoomHandleUp = () => { zoomDragRef.current = null; };
 
   // ── Draw on canvas ────────────────────────────────────────────────────────
   const draw = useCallback(() => {
@@ -354,7 +410,8 @@ export default function StudioCanvas({
         </button>
       </div>
 
-      {/* The stage */}
+      {/* The stage (scrolls when zoomed past the available area) */}
+      <div className={`studio-stage-scroll${zoom !== 'fit' && (stageW > availW || stageH > availH) ? ' is-overflowing' : ''}`}>
       <div
         ref={wrapperRef}
         className="studio-canvas-wrapper"
@@ -421,6 +478,35 @@ export default function StudioCanvas({
             </div>
           )}
         </div>
+
+        {/* Stage zoom handle (display size only) */}
+        <div
+          className="cs-stage-zoom-handle"
+          title="Drag to zoom the preview (double-click to fit)"
+          onPointerDown={onZoomHandleDown}
+          onPointerMove={onZoomHandleMove}
+          onPointerUp={onZoomHandleUp}
+          onPointerCancel={onZoomHandleUp}
+          onDoubleClick={() => setZoom('fit')}
+        />
+      </div>
+      </div>
+
+      {/* Preview zoom controls (bottom-left) */}
+      <div className="cs-zoom-bar" title="Preview zoom: changes display size only, not render or export resolution">
+        <button className={zoom === 'fit' ? 'active' : ''} onClick={() => setZoom('fit')}>Fit</button>
+        {ZOOM_PRESETS.map(z => (
+          <button key={z} className={zoom === z ? 'active' : ''} onClick={() => setZoom(z)}>{z}%</button>
+        ))}
+        <input
+          type="range"
+          min={ZOOM_MIN}
+          max={ZOOM_MAX}
+          value={Math.round(zoomPct)}
+          onChange={e => setZoom(parseInt(e.target.value, 10))}
+          aria-label="Preview zoom"
+        />
+        <span className="cs-zoom-val">{Math.round(zoomPct)}%</span>
       </div>
 
       {/* Floating element toolbar (right edge) */}
