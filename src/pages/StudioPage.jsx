@@ -7,6 +7,37 @@ import { Icon } from '../components/studio/icons';
 import { preloadImages } from '../lib/renderVideo';
 import { drawStudioFrame, preloadLayerImages } from '../lib/studioRender';
 import { loadImage } from '../lib/frameExtras';
+import { makerFileToStudioProject, isMakerProjectFile } from '../lib/mergeSections';
+
+const VIDEO_EXT = /\.(mp4|m4v|webm|mov|mkv|ogv|avi)$/i;
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
+const AUDIO_EXT = /\.(mp3|wav|m4a|aac|ogg|oga|flac|opus)$/i;
+
+function kindOf(file) {
+  const t = file.type || '';
+  if (t.startsWith('video/') || VIDEO_EXT.test(file.name)) return 'video';
+  if (t.startsWith('image/') || IMAGE_EXT.test(file.name)) return 'image';
+  if (t.startsWith('audio/') || AUDIO_EXT.test(file.name)) return 'audio';
+  if (t === 'application/json' || /\.json$/i.test(file.name)) return 'project';
+  return null;
+}
+
+// Reads a video's length; rejects if the browser can't decode the file.
+function probeVideo(url) {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.muted = true;
+    const timer = setTimeout(() => reject(new Error('timed out reading the video')), 15000);
+    v.onloadedmetadata = () => {
+      clearTimeout(timer);
+      if (!v.videoWidth) { reject(new Error('no playable video track')); return; }
+      resolve(Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 5);
+    };
+    v.onerror = () => { clearTimeout(timer); reject(new Error('unsupported format or codec')); };
+    v.src = url;
+  });
+}
 import { exportStudioVideo } from '../lib/studioExport';
 import { getSnapshotInfo, loadSnapshot, deleteSnapshot } from '../lib/autosave';
 import { useAutosave } from '../lib/useAutosave';
@@ -84,6 +115,9 @@ export default function StudioPage({ initialProject, onBack }) {
   const [leftTab, setLeftTab] = useState('media');
   const [rightTab, setRightTab] = useState(null);
   const [editingName, setEditingName] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [importing, setImporting] = useState('');
+  const mediaInputRef = useRef(null);
 
   const audioRef = useRef(null);
   const bgmRef = useRef(null);
@@ -414,17 +448,29 @@ export default function StudioPage({ initialProject, onBack }) {
     });
   }, []);
 
+  const flashNotice = useCallback((msg, ms = 3500) => {
+    setSaveNotice(msg);
+    setTimeout(() => setSaveNotice(''), ms);
+  }, []);
+
   const handleAddImageLayer = useCallback(async (file) => {
     const url = URL.createObjectURL(file);
-    if (file.type.startsWith('video/')) {
-      const sourceDuration = await new Promise((resolve) => {
-        const v = document.createElement('video');
-        v.preload = 'metadata';
-        v.onloadedmetadata = () => resolve(Number.isFinite(v.duration) ? v.duration : 5);
-        v.onerror = () => resolve(5);
-        v.src = url;
-      });
+    if (kindOf(file) === 'video') {
+      let sourceDuration;
+      try {
+        sourceDuration = await probeVideo(url);
+      } catch (err) {
+        URL.revokeObjectURL(url);
+        flashNotice(`⚠ Can't play "${file.name}" (${err.message}). Use MP4 (H.264) or WebM.`, 6000);
+        return;
+      }
       const start = timeRef.current;
+      const end = start + sourceDuration;
+      // A project without scenes grows to fit its clips
+      if (!(project.rows || []).length) {
+        const layerEnd = Math.max(0, ...(project.layers || []).map(l => l.endTime || 0));
+        updateProject({ duration: Math.max(end, layerEnd, 1) });
+      }
       handleAddLayer({
         type: 'video',
         name: file.name,
@@ -433,7 +479,7 @@ export default function StudioPage({ initialProject, onBack }) {
         rotation: 0, opacity: 1, zIndex: 2,
         animation: 'none', animDuration: 0.4,
         startTime: start,
-        endTime: Math.min(start + sourceDuration, Math.max(project.duration, start + 0.5)),
+        endTime: (project.rows || []).length ? Math.min(end, Math.max(project.duration, start + 0.5)) : end,
         trimStart: 0,
         sourceDuration,
         volume: 1,
@@ -457,7 +503,7 @@ export default function StudioPage({ initialProject, onBack }) {
       startTime: timeRef.current,
       endTime: Math.min(timeRef.current + 5, project.duration),
     });
-  }, [project.duration, handleAddLayer]);
+  }, [project.duration, project.rows, project.layers, handleAddLayer, updateProject, flashNotice]);
 
   const handleImportBgm = useCallback((file) => {
     const url = URL.createObjectURL(file);
@@ -497,8 +543,11 @@ export default function StudioPage({ initialProject, onBack }) {
       imageUrls: await Promise.all((project.imageUrls || []).map(toDataUrl)),
       audioUrl: await toDataUrl(project.audioUrl),
       bgmUrl: await toDataUrl(project.bgmUrl),
+      logoUrl: await toDataUrl(project.logoUrl),
       layers: await Promise.all(project.layers.map(async l => (
-        l.type === 'image' ? { ...l, imageUrl: await toDataUrl(l.imageUrl) } : l
+        l.type === 'image' ? { ...l, imageUrl: await toDataUrl(l.imageUrl) }
+          : l.type === 'video' ? { ...l, videoUrl: await toDataUrl(l.videoUrl) }
+            : l
       ))),
     };
     const json = JSON.stringify(payload);
@@ -513,24 +562,64 @@ export default function StudioPage({ initialProject, onBack }) {
     setTimeout(() => setSaveNotice(''), 3000);
   }, [project]);
 
-  const handleLoadProject = useCallback(async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const openProjectFile = useCallback(async (file) => {
     try {
-      const text = await file.text();
-      const data = JSON.parse(text);
-      setProject(buildProject(data));
+      setImporting(`Opening ${file.name}…`);
+      const data = JSON.parse(await file.text());
+      let next;
+      if (isMakerProjectFile(data)) {
+        setImporting('Merging Video Maker sections…');
+        next = await makerFileToStudioProject(data);
+      } else if (Array.isArray(data.rows) || Array.isArray(data.layers)) {
+        next = data;
+      } else {
+        throw new Error('This file is not a Studio or Video Maker project.');
+      }
+      setProject(buildProject(next));
+      historyRef.current = { past: [], future: [], last: null, skip: false };
       setSelectedLayerId(null);
       seek(0);
-      setSaveNotice('✓ Project loaded');
-      setTimeout(() => setSaveNotice(''), 3000);
+      flashNotice(`✓ Opened "${next.name || file.name}"`);
     } catch (err) {
       console.error('Failed to load project:', err);
-      setSaveNotice('⚠ Failed to load project');
-      setTimeout(() => setSaveNotice(''), 3000);
+      flashNotice(`⚠ ${err.message || 'Failed to load project'}`, 8000);
+    } finally {
+      setImporting('');
     }
+  }, [seek, flashNotice]);
+
+  const handleLoadProject = useCallback((e) => {
+    const file = e.target.files?.[0];
     e.target.value = '';
-  }, [seek]);
+    if (file) openProjectFile(file);
+  }, [openProjectFile]);
+
+  // Any mix of files from the picker or drag & drop
+  const handleImportFiles = useCallback(async (fileList) => {
+    const files = [...(fileList || [])];
+    const skipped = [];
+    for (const file of files) {
+      const kind = kindOf(file);
+      if (kind === 'video' || kind === 'image') await handleAddImageLayer(file);
+      else if (kind === 'audio') handleImportBgm(file);
+      else if (kind === 'project') await openProjectFile(file);
+      else skipped.push(file.name);
+    }
+    if (skipped.length) flashNotice(`⚠ Skipped unsupported file(s): ${skipped.join(', ')}`, 6000);
+  }, [handleAddImageLayer, handleImportBgm, openProjectFile, flashNotice]);
+
+  const handleDragOver = useCallback((e) => {
+    if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
+    e.preventDefault();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDrop = useCallback((e) => {
+    if (!e.dataTransfer?.files?.length) return;
+    e.preventDefault();
+    setIsDragOver(false);
+    handleImportFiles(e.dataTransfer.files);
+  }, [handleImportFiles]);
 
   const handleExport = useCallback(async () => {
     if (isExporting) return;
@@ -673,7 +762,30 @@ export default function StudioPage({ initialProject, onBack }) {
   const toggleRightTab = (id) => setRightTab(t => (t === id ? null : id));
 
   return (
-    <div className="studio-page">
+    <div
+      className={`studio-page${isDragOver ? ' is-drag-over' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={(e) => { if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget)) setIsDragOver(false); }}
+      onDrop={handleDrop}
+    >
+      <input
+        ref={mediaInputRef}
+        type="file"
+        multiple
+        accept="image/*,video/*,audio/*,.mp4,.mov,.webm,.mkv,.m4v"
+        style={{ display: 'none' }}
+        onChange={(e) => { handleImportFiles(e.target.files); e.target.value = ''; }}
+      />
+      {isDragOver && (
+        <div className="studio-drop-overlay">
+          <div className="studio-drop-card">
+            <Icon name="upload" size={34} />
+            <strong>Drop to import</strong>
+            <span>Videos &amp; images become layers · audio becomes music · .json opens a project</span>
+          </div>
+        </div>
+      )}
+      {importing && <div className="studio-import-toast">{importing}</div>}
       {/* ── TOP NAV ── */}
       <header className="studio-topnav">
         <div className="studio-topnav-left">
@@ -716,11 +828,11 @@ export default function StudioPage({ initialProject, onBack }) {
           <input
             ref={loadFileInputRef}
             type="file"
-            accept=".json,.studio.json"
+            accept=".json,.studio.json,.videomaker.json"
             style={{ display: 'none' }}
             onChange={handleLoadProject}
           />
-          <button className="studio-topnav-btn" onClick={() => loadFileInputRef.current?.click()} title="Open a .studio.json project">
+          <button className="studio-topnav-btn" onClick={() => loadFileInputRef.current?.click()} title="Open a Studio (.studio.json) or Video Maker (.videomaker.json) project">
             <Icon name="folder" size={14} /> Open
           </button>
           <button className="studio-topnav-btn" onClick={handleSaveProject} title="Save project to a .studio.json file">
@@ -778,6 +890,7 @@ export default function StudioPage({ initialProject, onBack }) {
             onClose={() => setLeftTab(null)}
             onAddLayer={handleAddLayer}
             onAddImageLayer={handleAddImageLayer}
+            onImportFiles={handleImportFiles}
             onImportBgm={handleImportBgm}
             onLoadProject={() => loadFileInputRef.current?.click()}
             onSaveProject={handleSaveProject}
@@ -822,6 +935,7 @@ export default function StudioPage({ initialProject, onBack }) {
             onDeleteLayer={handleDeleteLayer}
             onDuplicateLayer={handleDuplicateLayer}
             onSplitLayer={handleSplitLayer}
+            onImportMedia={() => mediaInputRef.current?.click()}
             onSetTransition={handleSetTransition}
             onOpenLeftTab={setLeftTab}
             onUpdateRowsAndDuration={handleUpdateRowsAndDuration}

@@ -483,7 +483,7 @@ export default function RightPanel({
         <h2>{TAB_TITLES[activeTab] || ''}</h2>
         <button onClick={onClose} title="Close panel"><Icon name="x" size={16} /></button>
       </div>
-      {body ? body() : null}
+      <div className="rp-scroll">{body ? body() : null}</div>
     </aside>
   );
 }

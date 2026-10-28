@@ -85,6 +85,7 @@ export default function StudioTimeline({
   onSetTransition,
   onOpenLeftTab,
   onUpdateRowsAndDuration,
+  onImportMedia,
 }) {
   const {
     duration = 30, rows = [], layers = [], audioUrl, bgmUrl, bgmName,
@@ -389,7 +390,7 @@ export default function StudioTimeline({
             <button
               className="tl-add-placeholder"
               onMouseDown={(e) => e.stopPropagation()}
-              onClick={() => onOpenLeftTab?.(meta.tab)}
+              onClick={() => ((type === 'video' || type === 'image') && onImportMedia ? onImportMedia() : onOpenLeftTab?.(meta.tab))}
             >
               {meta.add}
             </button>

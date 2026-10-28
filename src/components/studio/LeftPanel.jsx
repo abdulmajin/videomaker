@@ -45,6 +45,7 @@ export default function LeftPanel({
   onClose,
   onAddLayer,
   onAddImageLayer,
+  onImportFiles,
   onImportBgm,
   onLoadProject,
   onSaveProject,
@@ -135,8 +136,8 @@ export default function LeftPanel({
   };
 
   const handleImageFile = (e) => {
-    const file = e.target.files?.[0];
-    if (file) onAddImageLayer(file);
+    if (onImportFiles) onImportFiles(e.target.files);
+    else if (e.target.files?.[0]) onAddImageLayer(e.target.files[0]);
     e.target.value = '';
   };
 
@@ -148,8 +149,8 @@ export default function LeftPanel({
 
   const hiddenInputs = (
     <>
-      <input ref={imageInputRef} type="file" accept="image/*,video/*" style={{ display: 'none' }} onChange={handleImageFile} />
-      <input ref={videoInputRef} type="file" accept="video/*" style={{ display: 'none' }} onChange={handleImageFile} />
+      <input ref={imageInputRef} type="file" multiple accept="image/*,video/*,audio/*,.mp4,.mov,.webm,.mkv,.m4v" style={{ display: 'none' }} onChange={handleImageFile} />
+      <input ref={videoInputRef} type="file" multiple accept="video/*,.mp4,.mov,.webm,.mkv,.m4v" style={{ display: 'none' }} onChange={handleImageFile} />
       <input ref={bgmInputRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={handleBgmFile} />
     </>
   );
@@ -184,7 +185,7 @@ export default function LeftPanel({
                 <Icon name="music" size={15} /> Background music
               </button>
               <button onClick={() => { setMenuOpen(false); onLoadProject(); }}>
-                <Icon name="folder" size={15} /> Studio project (.json)
+                <Icon name="folder" size={15} /> Project file (.studio / .videomaker .json)
               </button>
             </div>
           )}
@@ -199,11 +200,16 @@ export default function LeftPanel({
         </div>
 
         <div className="sp-media-body">
+          <button type="button" className="sp-dropzone" onClick={() => imageInputRef.current?.click()}>
+            <Icon name="upload" size={22} />
+            <strong>{hasAny ? 'Add more media' : 'Drop files here or click to browse'}</strong>
+            <span>MP4 · WebM · MOV · images · audio</span>
+          </button>
           {!hasAny && (
-            <div className="sp-empty-card">
-              <Icon name="media" size={28} />
-              <p>No media yet. Open a merged project from the Video Maker, or import files.</p>
-            </div>
+            <p className="sp-hint">
+              To bring in a whole video, merge it in the Video Maker and click <b>Open in Studio Editor</b>,
+              or use <b>Open</b> with a saved .videomaker.json / .studio.json file.
+            </p>
           )}
 
           {showImages && imageUrls.some(Boolean) && (
@@ -457,9 +463,9 @@ export default function LeftPanel({
         <div><strong>{fmt(duration)}</strong><span>Length</span></div>
       </div>
       <button className="sp-tool-btn" onClick={onSaveProject}><Icon name="save" size={14} /> Save studio project</button>
-      <button className="sp-tool-btn" onClick={onLoadProject}><Icon name="folder" size={14} /> Open studio project</button>
+      <button className="sp-tool-btn" onClick={onLoadProject}><Icon name="folder" size={14} /> Open project file</button>
       <button className="sp-tool-btn" onClick={onBack}><Icon name="back" size={14} /> Back to Video Maker</button>
-      <p className="sp-hint">To import a new script, merge it in the Video Maker and click <b>Open in Studio</b>.</p>
+      <p className="sp-hint">Opens .studio.json files and Video Maker .videomaker.json files (sections must be transcribed &amp; aligned).</p>
     </div>
   );
 

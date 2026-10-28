@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, useEffect, useCallback } from 'react';
-import { decodeAudio, mergeAudioFiles } from './lib/audio';
+import { decodeAudio } from './lib/audio';
 import {
   downloadText,
   downloadBlob,
@@ -33,9 +33,10 @@ import RecoveryBanner, { autosaveLabel } from './components/RecoveryBanner';
 import { getSnapshotInfo, loadSnapshot, deleteSnapshot } from './lib/autosave';
 import { useAutosave } from './lib/useAutosave';
 import { useUndoHistory } from './lib/useUndoHistory';
-import { COLOR_GRADES, DEFAULT_BRAND, mergeWords, buildChapters, loadImage } from './lib/frameExtras';
+import { COLOR_GRADES, DEFAULT_BRAND, buildChapters, loadImage } from './lib/frameExtras';
 import { SFX_MODES } from './lib/sfx';
 import { supportsFastExport } from './lib/fastExport';
+import { mergeSections, isReadySection, dataUrlToBlob, overlaysToStudioLayers } from './lib/mergeSections';
 
 // ─── Helpers: blob URL ↔ base64 data URL (for project save/restore) ──────────
 async function blobUrlToDataUrl(url) {
@@ -52,6 +53,15 @@ async function blobUrlToDataUrl(url) {
   } catch {
     return null;
   }
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(blob);
+  });
 }
 
 function dataUrlToBlobUrl(dataUrl) {
@@ -535,8 +545,7 @@ export default function App() {
 
   // Merge All Sections into Final Video
   const handleMergeAllSections = async () => {
-    const readySections = sections.filter((s) => s.audio && s.rows?.length > 0);
-    if (readySections.length === 0) {
+    if (!sections.some(isReadySection)) {
       setMergeError(
         'Please ensure at least one section has voice audio and aligned slides before merging.'
       );
@@ -547,88 +556,8 @@ export default function App() {
     setIsMerging(true);
 
     try {
-      // 1. Merge audio files sequentially into one seamless WAV Blob
-      const audioFiles = readySections.map((s) => s.audio);
-      const mergedAudioResult = await mergeAudioFiles(audioFiles);
-      if (!mergedAudioResult) {
-        throw new Error('Failed to merge audio files.');
-      }
-
-      const mergedAudioUrl = URL.createObjectURL(mergedAudioResult.blob);
-
-      // 2. Stitch rows, slides, images, and retention hooks with cumulative time offsets
-      const mergedRows = [];
-      const mergedSlides = [];
-      const mergedImageUrls = [];
-      const mergedSlideAnimations = {};
-      const mergedTextOverlays = {};
-      const mergedCustomTextOverlays = [];
-      const mergedSlideFilters = {};
-      let globalSlideId = 1;
-      let timeOffset = 0;
-
-      readySections.forEach((sec, secIdx) => {
-        const secRows = sec.rows || [];
-        const secSlides = sec.slides || [];
-        const secImages = sec.effectiveImageUrls || [];
-        const secOverlays = sec.customTextOverlays || [];
-
-        secOverlays.forEach((o, oIdx) => {
-          mergedCustomTextOverlays.push({
-            ...o,
-            id: `mrg-sec-${secIdx}-${o.id || oIdx}`,
-            startTime: Number(((o.startTime ?? 0) + timeOffset).toFixed(2)),
-            endTime: Number(((o.endTime ?? 3) + timeOffset).toFixed(2)),
-          });
-        });
-
-        secRows.forEach((row, rowIdx) => {
-          const slide = secSlides[rowIdx] || {};
-          const imgUrl = secImages[rowIdx] || null;
-          const anim = sec.slideAnimations?.[rowIdx] || 'auto';
-          const hook = sec.textOverlays?.[rowIdx] || '';
-
-          mergedRows.push({
-            id: globalSlideId,
-            start: row.start + timeOffset,
-            text: row.text || slide.text || '',
-            sectionIndex: secIdx,
-            sectionTitle: sec.title || `Section ${secIdx + 1}`,
-          });
-
-          mergedSlides.push({
-            id: globalSlideId,
-            text: slide.text || row.text || '',
-            raw: slide.raw || '',
-            textOverlay: hook,
-            sectionIndex: secIdx,
-          });
-
-          mergedImageUrls.push(imgUrl);
-          mergedSlideAnimations[globalSlideId - 1] = anim;
-          mergedTextOverlays[globalSlideId - 1] = hook;
-          if (sec.slideFilters?.[rowIdx]) mergedSlideFilters[globalSlideId - 1] = sec.slideFilters[rowIdx];
-          globalSlideId++;
-        });
-
-        timeOffset += sec.duration;
-      });
-
-      setMergedData({
-        audioFile: mergedAudioResult.blob,
-        audioUrl: mergedAudioUrl,
-        duration: mergedAudioResult.duration,
-        rows: mergedRows,
-        slides: mergedSlides,
-        effectiveImageUrls: mergedImageUrls,
-        slideAnimations: mergedSlideAnimations,
-        textOverlays: mergedTextOverlays,
-        customTextOverlays: mergedCustomTextOverlays,
-        slideFilters: mergedSlideFilters,
-        words: mergeWords(readySections),
-      });
+      setMergedData(await mergeSections(sections));
       setChapters(null);
-
       setTimeout(() => renderMergedPreview(0), 100);
     } catch (err) {
       setMergeError(`Merge failed: ${err.message}`);
@@ -776,23 +705,39 @@ export default function App() {
           if (dataUrl) manualImages[idx] = { ...imgObj, url: dataUrl };
         }
 
+        // Images actually shown per slide, and the uploaded originals
+        const effectiveImageDataUrls = await Promise.all(
+          (s.effectiveImageUrls || []).map((u) => (u ? blobUrlToDataUrl(u) : null))
+        );
+        const uploadedImages = await Promise.all(
+          (s.images || []).map(async (f) => ({ name: f.name, type: f.type, dataUrl: await blobToDataUrl(f) }))
+        );
+
         return {
           id: s.id,
           title: s.title,
           scriptText: s.scriptText,
           inputMode: s.inputMode,
+          uploadedDocName: s.uploadedDocName,
           slidePrompts: s.slidePrompts,
           textOverlays: s.textOverlays,
           slideAnimations: s.slideAnimations,
+          slideFilters: s.slideFilters,
+          customTextOverlays: s.customTextOverlays,
           audioDataUrl,
+          duration: s.duration,
+          rows: s.rows,
+          words: s.words,
           generatedImages,
           manualImages,
+          effectiveImageDataUrls,
+          uploadedImages,
         };
       })
     );
 
     const projectPayload = {
-      version: '2.1',
+      version: '2.2',
       savedAt: new Date().toISOString(),
       projectTitle,
       aspectRatio,
@@ -803,6 +748,12 @@ export default function App() {
       visualStyle,
       bgmVolume,
       autoDuck,
+      bgmName: bgmFile?.name || '',
+      bgmDataUrl: bgmFile ? await blobToDataUrl(bgmFile) : null,
+      colorGrade,
+      sfx,
+      brand: { ...brand, logoFile: null, logoName: brand.logoFile?.name || '' },
+      logoDataUrl: brand.logoFile ? await blobToDataUrl(brand.logoFile) : null,
       sections: serializedSections,
     };
 
@@ -832,12 +783,35 @@ export default function App() {
       if (data.visualStyle) setVisualStyle(data.visualStyle);
       if (data.bgmVolume != null) setBgmVolume(data.bgmVolume);
       if (data.autoDuck != null) setAutoDuck(data.autoDuck);
+      if (data.colorGrade) setColorGrade(data.colorGrade);
+      if (data.sfx) setSfx(data.sfx);
+      const bgmBlob = dataUrlToBlob(data.bgmDataUrl);
+      if (bgmBlob) {
+        const f = new File([bgmBlob], data.bgmName || 'music', { type: bgmBlob.type });
+        setBgmFile(f);
+        setBgmUrl(URL.createObjectURL(f));
+      }
+      if (data.brand) {
+        const logoBlob = dataUrlToBlob(data.logoDataUrl);
+        setBrand({
+          ...DEFAULT_BRAND,
+          ...data.brand,
+          logoFile: logoBlob ? new File([logoBlob], data.brand.logoName || 'logo', { type: logoBlob.type }) : null,
+        });
+      }
+      setMergedData(null);
 
       if (Array.isArray(data.sections) && data.sections.length > 0) {
         const restoredSections = data.sections.map((s, idx) => {
-          // Restore audio blob URL from base64 data URL
-          const audioUrl = s.audioDataUrl ? dataUrlToBlobUrl(s.audioDataUrl) : null;
-          const audio = audioUrl ? null : null; // audio Blob not restored (URL is sufficient for playback)
+          // Restore the voice audio as a Blob (merging needs it) plus a playback URL
+          const audio = dataUrlToBlob(s.audioDataUrl);
+          const audioUrl = audio ? URL.createObjectURL(audio) : null;
+          const images = (s.uploadedImages || [])
+            .map((img) => {
+              const b = dataUrlToBlob(img.dataUrl);
+              return b ? new File([b], img.name, { type: img.type || b.type }) : null;
+            })
+            .filter(Boolean);
 
           // Restore generated image URLs
           const generatedImages = {};
@@ -857,7 +831,15 @@ export default function App() {
             ...createNewSection(idx),
             ...s,
             id: s.id || `sec-${Date.now()}-${idx}`,
+            audio,
             audioUrl,
+            images,
+            rows: s.rows || [],
+            words: s.words || [],
+            duration: s.duration || 0,
+            effectiveImageDataUrls: undefined,
+            uploadedImages: undefined,
+            audioDataUrl: undefined,
             generatedImages,
             manualImages,
             // duration will be recalculated when audio loads
@@ -879,6 +861,7 @@ export default function App() {
   const handleOpenInStudio = () => {
     if (!mergedData) return;
     setStudioInitialProject({
+      name: projectTitle || 'Untitled project',
       aspectRatio,
       duration: mergedData.duration,
       rows: mergedData.rows,
@@ -886,6 +869,7 @@ export default function App() {
       imageUrls: mergedData.effectiveImageUrls,
       audioUrl: mergedData.audioUrl,
       bgmUrl: bgmUrl || null,
+      bgmName: bgmFile?.name || '',
       bgmVolume,
       autoDuck,
       animationMode,
@@ -893,7 +877,8 @@ export default function App() {
       hookStyle,
       slideAnimations: mergedData.slideAnimations || {},
       textOverlays: mergedData.textOverlays || {},
-      layers: [],
+      // Text overlays placed in the Maker become editable Studio text layers
+      layers: overlaysToStudioLayers(mergedData.customTextOverlays || []),
       transitions: {},
       words: mergedData.words || [],
       colorGrade,
