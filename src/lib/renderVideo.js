@@ -429,21 +429,14 @@ export function drawVideoFrame({
     canvasHeight: height,
   });
 
-  // Target image bounding box — all active caption styles render at the bottom of the video
-  const hasBottomCaptions = Boolean(captionStyle && captionStyle !== 'none');
-
-  const maxImgHeight = isVertical
-    ? height * 0.58
-    : hasBottomCaptions
-    ? height * 0.72
-    : height * 0.88;
+  // Target image bounding box — keep full centered slide/video block so captions sit INSIDE it at the bottom
+  const maxImgHeight = isVertical ? height * 0.88 : height * 0.88;
   const maxImgWidth = isVertical ? width * 0.96 : width * 0.94;
-  const centerY = isVertical
-    ? height * 0.40
-    : hasBottomCaptions
-    ? 36 + maxImgHeight / 2
-    : height / 2;
+  const centerY = height / 2;
   const centerX = width / 2;
+
+  let videoBlockBottom = centerY + maxImgHeight / 2;
+  let videoBlockWidth = maxImgWidth;
 
   // 4. Render Animated Slide Image
   if (activeImg && activeImg.naturalWidth && activeImg.naturalHeight) {
@@ -453,6 +446,8 @@ export function drawVideoFrame({
 
     const dw = activeImg.naturalWidth * baseRatio;
     const dh = activeImg.naturalHeight * baseRatio;
+    videoBlockBottom = centerY + dh / 2;
+    videoBlockWidth = dw;
 
     ctx.save();
     // Soft vignette/shadow around slide
@@ -476,8 +471,10 @@ export function drawVideoFrame({
     ctx.globalAlpha = Math.max(0, Math.min(1, transform.opacity));
 
     ctx.fillStyle = '#1e293b';
-    const boxW = isVertical ? width * 0.85 : width * 0.58;
-    const boxH = isVertical ? height * 0.38 : height * 0.44;
+    const boxW = isVertical ? width * 0.88 : width * 0.78;
+    const boxH = isVertical ? height * 0.68 : height * 0.76;
+    videoBlockBottom = centerY + boxH / 2;
+    videoBlockWidth = boxW;
     drawRoundedRect(ctx, -boxW / 2, -boxH / 2, boxW, boxH, 16);
     ctx.fill();
 
@@ -503,7 +500,7 @@ export function drawVideoFrame({
     });
   }
 
-  // 6. Draw Modern Animated Bottom Captions (uses Whisper words or auto-synthesized phrase timing)
+  // 6. Draw Modern Animated Bottom Captions INSIDE the video block near its bottom with padding
   if (captionStyle && captionStyle !== 'none') {
     drawModernBottomCaptions(ctx, {
       width,
@@ -515,6 +512,8 @@ export function drawVideoFrame({
       slideEnd,
       captionStyle,
       isVertical,
+      videoBlockBottom,
+      videoBlockWidth,
     });
   }
 

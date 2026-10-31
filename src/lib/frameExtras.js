@@ -156,6 +156,8 @@ export function drawModernBottomCaptions(
     slideEnd = 0,
     captionStyle = 'hormozi-pop',
     isVertical = false,
+    videoBlockBottom = null,
+    videoBlockWidth = null,
   }
 ) {
   const style = normalizeCaptionStyle(captionStyle);
@@ -232,8 +234,15 @@ export function drawModernBottomCaptions(
     };
   });
 
-  // Wrap into 1-2 lines fitting within 86% of canvas width
-  const maxW = width * (isVertical ? 0.88 : 0.82);
+  const padX = Math.round(fs * 0.65);
+  const padY = Math.round(fs * 0.38);
+
+  // Wrap into 1-2 lines fitting cleanly inside the video block with side padding
+  const effectiveBlockW = videoBlockWidth || width * (isVertical ? 0.92 : 0.88);
+  const maxW = Math.max(
+    fs * 6,
+    Math.min(width * (isVertical ? 0.86 : 0.80), effectiveBlockW - padX * 2 - (isVertical ? 28 : 40))
+  );
   const lines = [[]];
   let lineW = 0;
   for (const it of items) {
@@ -257,11 +266,14 @@ export function drawModernBottomCaptions(
     if (lw > maxLineW) maxLineW = lw;
   }
 
-  // Anchor cleanly at the bottom of the video
-  const bottomMargin = isVertical ? Math.round(height * 0.085) : Math.round(height * 0.055);
-  const baseY = height - bottomMargin - totalTextH / 2;
+  // Anchor INSIDE the bottom of the video block with comfortable inner padding
+  const blockBottom = videoBlockBottom || (height - (isVertical ? 64 : 42));
+  const innerBottomPadding = isVertical ? Math.round(height * 0.028) : Math.round(height * 0.032);
+  const boxW = Math.min(effectiveBlockW - (isVertical ? 20 : 28), maxLineW + padX * 2);
+  const boxH = totalTextH + padY * 2;
+  const baseY = blockBottom - innerBottomPadding - boxH / 2;
 
-  // Phrase-level entrance transform
+  // Phrase-level entrance transform (kept strictly inside the video block)
   let blockOffsetY = 0;
   let blockScale = 1;
   let blockAlpha = exitAlpha;
@@ -270,7 +282,10 @@ export function drawModernBottomCaptions(
     blockScale = 0.82 + 0.18 * easeOutBack(enterP);
     blockAlpha *= Math.min(1, enterP * 1.6);
   } else if (style === 'glass-glow' || style === 'capcut-pill' || style === 'cinema-rise') {
-    blockOffsetY = (1 - easeOutCubic(enterP)) * (fs * 0.75);
+    blockOffsetY = Math.min(
+      innerBottomPadding * 0.65,
+      (1 - easeOutCubic(enterP)) * (fs * 0.55)
+    );
     blockAlpha *= easeOutCubic(enterP);
   } else {
     blockAlpha *= Math.min(1, enterP * 1.5);
@@ -281,11 +296,7 @@ export function drawModernBottomCaptions(
   ctx.scale(blockScale, blockScale);
   ctx.translate(-width / 2, -baseY);
 
-  // Draw bottom container pill / bar per style
-  const padX = Math.round(fs * 0.65);
-  const padY = Math.round(fs * 0.38);
-  const boxW = Math.min(width * 0.94, maxLineW + padX * 2);
-  const boxH = totalTextH + padY * 2;
+  // Draw bottom container pill / bar per style inside the video block
   const boxX = (width - boxW) / 2;
   const boxY = baseY - boxH / 2;
 
