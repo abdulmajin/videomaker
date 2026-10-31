@@ -266,12 +266,10 @@ export function drawModernBottomCaptions(
     if (lw > maxLineW) maxLineW = lw;
   }
 
-  // Anchor INSIDE the bottom of the video block with comfortable inner padding
+  // Anchor INSIDE the bottom of the video block with comfortable inner padding (no background box)
   const blockBottom = videoBlockBottom || (height - (isVertical ? 64 : 42));
-  const innerBottomPadding = isVertical ? Math.round(height * 0.028) : Math.round(height * 0.032);
-  const boxW = Math.min(effectiveBlockW - (isVertical ? 20 : 28), maxLineW + padX * 2);
-  const boxH = totalTextH + padY * 2;
-  const baseY = blockBottom - innerBottomPadding - boxH / 2;
+  const innerBottomPadding = isVertical ? Math.round(height * 0.032) : Math.round(height * 0.038);
+  const baseY = blockBottom - innerBottomPadding - totalTextH / 2;
 
   // Phrase-level entrance transform (kept strictly inside the video block)
   let blockOffsetY = 0;
@@ -296,81 +294,7 @@ export function drawModernBottomCaptions(
   ctx.scale(blockScale, blockScale);
   ctx.translate(-width / 2, -baseY);
 
-  // Draw bottom container pill / bar per style inside the video block
-  const boxX = (width - boxW) / 2;
-  const boxY = baseY - boxH / 2;
-
-  if (style === 'glass-glow') {
-    ctx.save();
-    ctx.shadowColor = 'rgba(2, 6, 23, 0.65)';
-    ctx.shadowBlur = 24;
-    ctx.shadowOffsetY = 8;
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-    roundRect(ctx, boxX, boxY, boxW, boxH, Math.min(22, boxH / 2));
-    ctx.fill();
-
-    const grad = ctx.createLinearGradient(boxX, boxY, boxX + boxW, boxY + boxH);
-    grad.addColorStop(0, '#38bdf8');
-    grad.addColorStop(0.5, '#818cf8');
-    grad.addColorStop(1, '#2dd4bf');
-    ctx.strokeStyle = grad;
-    ctx.lineWidth = Math.max(2, fs * 0.06);
-    ctx.stroke();
-    ctx.restore();
-  } else if (style === 'capcut-pill' || style === 'hormozi-pop' || style === 'cinema-rise') {
-    ctx.save();
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
-    ctx.shadowBlur = 20;
-    ctx.shadowOffsetY = 6;
-    ctx.fillStyle =
-      style === 'hormozi-pop'
-        ? 'rgba(9, 13, 22, 0.72)'
-        : style === 'cinema-rise'
-        ? 'rgba(9, 13, 22, 0.78)'
-        : 'rgba(15, 23, 42, 0.84)';
-    roundRect(ctx, boxX, boxY, boxW, boxH, 16);
-    ctx.fill();
-    ctx.restore();
-  } else if (style === 'neon-pulse') {
-    ctx.save();
-    ctx.shadowColor = 'rgba(168, 85, 247, 0.55)';
-    ctx.shadowBlur = 26;
-    ctx.fillStyle = 'rgba(6, 10, 25, 0.88)';
-    roundRect(ctx, boxX, boxY, boxW, boxH, 18);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(34, 211, 238, 0.7)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
-  } else if (style === 'typewriter-bar') {
-    ctx.save();
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
-    ctx.shadowBlur = 22;
-    ctx.shadowOffsetY = 6;
-    ctx.fillStyle = 'rgba(10, 15, 29, 0.92)';
-    roundRect(ctx, boxX, boxY, boxW, boxH, 12);
-    ctx.fill();
-
-    // Left vertical gold accent bar
-    ctx.fillStyle = '#f59e0b';
-    roundRect(ctx, boxX + 6, boxY + 6, 6, boxH - 12, 3);
-    ctx.fill();
-    ctx.restore();
-  } else if (style === 'fire-stamp') {
-    ctx.save();
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.75)';
-    ctx.shadowBlur = 24;
-    ctx.shadowOffsetY = 7;
-    ctx.fillStyle = 'rgba(12, 12, 18, 0.92)';
-    roundRect(ctx, boxX, boxY, boxW, boxH, 14);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(249, 115, 22, 0.55)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  // Render each line and word with its per-style animation
+  // Render each line and word with its per-style animation (pure caption text, no background color)
   lines.forEach((line, li) => {
     const total = line.reduce((s, it, i) => s + it.w + (i ? space : 0), 0);
     let x = (width - total) / 2;
@@ -401,12 +325,13 @@ export function drawModernBottomCaptions(
         }
       } else if (style === 'capcut-pill') {
         if (isActive) {
-          wScale = 1 + 0.12 * easeOutBack(wordPopP);
+          wScale = 1 + 0.16 * easeOutBack(wordPopP);
+          wDy = -fs * 0.06 * easeOutBack(wordPopP);
         }
       } else if (style === 'glass-glow') {
         if (isActive) {
-          wScale = 1 + 0.08 * easeOutCubic(wordPopP);
-          wDy = -fs * 0.07 * easeOutCubic(wordPopP);
+          wScale = 1 + 0.1 * easeOutCubic(wordPopP);
+          wDy = -fs * 0.09 * easeOutCubic(wordPopP);
         }
       } else if (style === 'neon-pulse') {
         wDy = Math.sin(time * 5.5 + it.idx * 0.85) * (fs * 0.06);
@@ -420,12 +345,12 @@ export function drawModernBottomCaptions(
           wScale = 1 + 0.06 * riseP;
         } else if (!isSpoken) {
           wDy = fs * 0.18;
-          wAlpha = 0.42;
+          wAlpha = 0.55;
         }
       } else if (style === 'fire-stamp') {
         if (isActive) {
           const bounce = easeOutBack(wordPopP);
-          wScale = 1 + 0.18 * bounce;
+          wScale = 1 + 0.2 * bounce;
           wRot = (it.idx % 2 === 0 ? -1 : 1) * 0.045 * bounce;
         }
       }
@@ -437,67 +362,49 @@ export function drawModernBottomCaptions(
       ctx.translate(-wordCenterX, -(y + wDy));
       ctx.globalAlpha *= wAlpha;
 
-      // Active word background highlight pill (for CapCut Pill & Fire Stamp)
-      if (isActive && (style === 'capcut-pill' || style === 'fire-stamp')) {
-        const pillPadX = fs * 0.22;
-        const pillPadY = fs * 0.13;
-        const px = x - pillPadX;
-        const py = y + wDy - fs / 2 - pillPadY;
-        const pw = it.w + pillPadX * 2;
-        const ph = fs + pillPadY * 2;
-
-        const pGrad = ctx.createLinearGradient(px, py, px + pw, py + ph);
-        if (style === 'capcut-pill') {
-          pGrad.addColorStop(0, '#ec4899');
-          pGrad.addColorStop(1, '#8b5cf6');
-          ctx.shadowColor = 'rgba(236, 72, 153, 0.65)';
-        } else {
-          pGrad.addColorStop(0, '#f97316');
-          pGrad.addColorStop(1, '#dc2626');
-          ctx.shadowColor = 'rgba(249, 115, 22, 0.7)';
-        }
-        ctx.shadowBlur = 14;
-        ctx.fillStyle = pGrad;
-        roundRect(ctx, px, py, pw, ph, fs * 0.24);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-      }
-
-      // Word stroke / glow
+      // High-contrast text outline & glow (ensures readability on white & dark slides without any background box)
+      ctx.lineJoin = 'round';
+      ctx.miterLimit = 2;
       if (style === 'neon-pulse') {
-        ctx.shadowColor = isActive ? '#22d3ee' : '#a855f7';
-        ctx.shadowBlur = isActive ? 22 : 10;
-        ctx.strokeStyle = 'rgba(2, 6, 23, 0.9)';
-        ctx.lineWidth = Math.max(3, fs * 0.11);
-        ctx.lineJoin = 'round';
+        ctx.shadowColor = isActive ? 'rgba(34, 211, 238, 0.9)' : 'rgba(168, 85, 247, 0.75)';
+        ctx.shadowBlur = isActive ? 18 : 10;
+        ctx.shadowOffsetY = 2;
+        ctx.strokeStyle = '#020617';
+        ctx.lineWidth = Math.max(4, fs * 0.15);
         ctx.strokeText(it.label, x, y + wDy);
       } else if (style === 'hormozi-pop' || style === 'capcut-pill' || style === 'fire-stamp') {
-        ctx.lineJoin = 'round';
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
-        ctx.lineWidth = Math.max(4, fs * 0.16);
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
+        ctx.shadowBlur = 10;
+        ctx.shadowOffsetY = 3;
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = Math.max(5, fs * 0.18);
         ctx.strokeText(it.label, x, y + wDy);
       } else {
-        ctx.lineJoin = 'round';
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
-        ctx.lineWidth = Math.max(2.5, fs * 0.09);
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+        ctx.shadowBlur = 10;
+        ctx.shadowOffsetY = 2;
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = Math.max(4, fs * 0.14);
         ctx.strokeText(it.label, x, y + wDy);
       }
 
-      // Word fill color per style
+      // Word fill color per style (no background color behind text)
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
       if (style === 'hormozi-pop') {
-        ctx.fillStyle = isActive ? '#fde047' : isSpoken ? '#ffffff' : '#cbd5e1';
+        ctx.fillStyle = isActive ? '#fde047' : isSpoken ? '#ffffff' : '#e2e8f0';
       } else if (style === 'capcut-pill') {
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = isActive ? '#f472b6' : isSpoken ? '#ffffff' : '#e2e8f0';
       } else if (style === 'glass-glow') {
-        ctx.fillStyle = isActive ? '#38bdf8' : isSpoken ? '#f8fafc' : '#94a3b8';
+        ctx.fillStyle = isActive ? '#38bdf8' : isSpoken ? '#ffffff' : '#cbd5e1';
       } else if (style === 'neon-pulse') {
-        ctx.fillStyle = isActive ? '#22d3ee' : isSpoken ? '#ffffff' : '#e2e8f0';
+        ctx.fillStyle = isActive ? '#22d3ee' : isSpoken ? '#ffffff' : '#f0abfc';
       } else if (style === 'typewriter-bar') {
-        ctx.fillStyle = isActive ? '#fbbf24' : '#f8fafc';
+        ctx.fillStyle = isActive ? '#fbbf24' : '#ffffff';
       } else if (style === 'cinema-rise') {
-        ctx.fillStyle = isActive ? '#fef08a' : '#ffffff';
+        ctx.fillStyle = isActive ? '#fde047' : '#ffffff';
       } else if (style === 'fire-stamp') {
-        ctx.fillStyle = isActive ? '#ffffff' : isSpoken ? '#fde047' : '#f1f5f9';
+        ctx.fillStyle = isActive ? '#fb923c' : isSpoken ? '#fde047' : '#ffffff';
       } else {
         ctx.fillStyle = '#ffffff';
       }
@@ -509,7 +416,14 @@ export function drawModernBottomCaptions(
         const blink = Math.floor(time * 4) % 2 === 0;
         if (blink) {
           ctx.fillStyle = '#f59e0b';
-          ctx.fillRect(x + it.curW + 3, y + wDy - fs * 0.42, Math.max(3, fs * 0.1), fs * 0.84);
+          ctx.strokeStyle = '#000000';
+          ctx.lineWidth = 2;
+          const cx = x + it.curW + 4;
+          const cy = y + wDy - fs * 0.42;
+          const cw = Math.max(3, fs * 0.1);
+          const ch = fs * 0.84;
+          ctx.strokeRect(cx, cy, cw, ch);
+          ctx.fillRect(cx, cy, cw, ch);
         }
       }
 
