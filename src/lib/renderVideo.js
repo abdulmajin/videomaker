@@ -437,54 +437,44 @@ export function drawVideoFrame({
     canvasHeight: height,
   });
 
-  // Target image bounding box — keep full centered slide/video block so captions sit INSIDE it at the bottom
-  const maxImgHeight = isVertical ? height * 0.88 : height * 0.88;
-  const maxImgWidth = isVertical ? width * 0.96 : width * 0.94;
+  // Full-bleed screen resolution fit — zero rectangular border around slide images
   const centerY = height / 2;
   const centerX = width / 2;
 
-  let videoBlockBottom = centerY + maxImgHeight / 2;
-  let videoBlockWidth = maxImgWidth;
+  const videoBlockBottom = height;
+  const videoBlockWidth = width;
 
-  // 4. Render Animated Slide Image
+  // Ensure scale covers any entry translation so no background edge ever appears
+  const minCoverScale = Math.max(
+    1.0,
+    transform.scale,
+    1 + (Math.abs(transform.dx) * 2) / Math.max(1, width),
+    1 + (Math.abs(transform.dy) * 2) / Math.max(1, height)
+  );
+
+  // 4. Render Animated Slide Image (fits 100% of screen resolution)
   if (activeImg && activeImg.naturalWidth && activeImg.naturalHeight) {
-    const hRatio = maxImgWidth / activeImg.naturalWidth;
-    const vRatio = maxImgHeight / activeImg.naturalHeight;
-    const baseRatio = Math.min(hRatio, vRatio);
-
-    const dw = activeImg.naturalWidth * baseRatio;
-    const dh = activeImg.naturalHeight * baseRatio;
-    videoBlockBottom = centerY + dh / 2;
-    videoBlockWidth = dw;
+    const dw = width;
+    const dh = height;
 
     ctx.save();
-    // Soft vignette/shadow around slide
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
-    ctx.shadowBlur = 30;
-    ctx.shadowOffsetY = 10;
-
-    // Apply animation translation, scale, and opacity
+    // Apply animation translation, full-bleed scale, and opacity
     ctx.translate(centerX + transform.dx, centerY + transform.dy);
-    ctx.scale(transform.scale, transform.scale);
+    ctx.scale(minCoverScale, minCoverScale);
     ctx.globalAlpha = Math.max(0, Math.min(1, transform.opacity));
     ctx.filter = gradeFilter(colorGrade, slideFilters?.[activeIndex]);
 
     ctx.drawImage(activeImg, -dw / 2, -dh / 2, dw, dh);
     ctx.restore();
   } else {
-    // Placeholder card
+    // Full-screen placeholder card
     ctx.save();
     ctx.translate(centerX + transform.dx, centerY + transform.dy);
-    ctx.scale(transform.scale, transform.scale);
+    ctx.scale(minCoverScale, minCoverScale);
     ctx.globalAlpha = Math.max(0, Math.min(1, transform.opacity));
 
     ctx.fillStyle = '#1e293b';
-    const boxW = isVertical ? width * 0.88 : width * 0.78;
-    const boxH = isVertical ? height * 0.68 : height * 0.76;
-    videoBlockBottom = centerY + boxH / 2;
-    videoBlockWidth = boxW;
-    drawRoundedRect(ctx, -boxW / 2, -boxH / 2, boxW, boxH, 16);
-    ctx.fill();
+    ctx.fillRect(-width / 2, -height / 2, width, height);
 
     ctx.fillStyle = '#94a3b8';
     ctx.font = '600 32px system-ui, sans-serif';

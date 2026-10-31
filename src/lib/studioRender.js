@@ -163,43 +163,30 @@ export async function seekVideoLayers(layers, mediaMap, time) {
 // ─── Slide image drawing helper ───────────────────────────────────────────────
 
 function drawSlideImage({ ctx, img, activeIndex, activeSlide, animType, slideStart, slideDuration, time, width, height, filter = 'none' }) {
-  const isVertical = height > width;
-  const maxImgHeight = height * 0.88;
-  const maxImgWidth  = isVertical ? width * 0.96 : width * 0.94;
   const centerX = width / 2;
   const centerY = height / 2;
 
   const transform = computeSlideTransform({ animType, slideStart, slideDuration, time, canvasWidth: width, canvasHeight: height });
-
-  let blockBottom = centerY + maxImgHeight / 2;
-  let blockWidth = maxImgWidth;
+  const minCoverScale = Math.max(
+    1.0,
+    transform.scale,
+    1 + (Math.abs(transform.dx) * 2) / Math.max(1, width),
+    1 + (Math.abs(transform.dy) * 2) / Math.max(1, height)
+  );
 
   ctx.save();
   if (img && img.naturalWidth) {
-    const ratio = Math.min(maxImgWidth / img.naturalWidth, maxImgHeight / img.naturalHeight);
-    const dw = img.naturalWidth * ratio;
-    const dh = img.naturalHeight * ratio;
-    blockBottom = centerY + dh / 2;
-    blockWidth = dw;
-    ctx.shadowColor = 'rgba(0,0,0,0.55)';
-    ctx.shadowBlur = 30;
-    ctx.shadowOffsetY = 10;
     ctx.translate(centerX + transform.dx, centerY + transform.dy);
-    ctx.scale(transform.scale, transform.scale);
+    ctx.scale(minCoverScale, minCoverScale);
     ctx.globalAlpha = Math.max(0, Math.min(1, transform.opacity));
     ctx.filter = filter;
-    ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    ctx.drawImage(img, -width / 2, -height / 2, width, height);
   } else {
     ctx.translate(centerX + transform.dx, centerY + transform.dy);
-    ctx.scale(transform.scale, transform.scale);
+    ctx.scale(minCoverScale, minCoverScale);
     ctx.globalAlpha = Math.max(0, Math.min(1, transform.opacity));
     ctx.fillStyle = '#1e293b';
-    const bw = isVertical ? width * 0.88 : width * 0.78;
-    const bh = isVertical ? height * 0.68 : height * 0.76;
-    blockBottom = centerY + bh / 2;
-    blockWidth = bw;
-    drawRoundedRect(ctx, -bw / 2, -bh / 2, bw, bh, 16);
-    ctx.fill();
+    ctx.fillRect(-width / 2, -height / 2, width, height);
     ctx.fillStyle = '#94a3b8';
     ctx.font = '600 32px system-ui, sans-serif';
     ctx.textAlign = 'center';
@@ -207,7 +194,7 @@ function drawSlideImage({ ctx, img, activeIndex, activeSlide, animType, slideSta
     ctx.fillText(`Slide ${activeSlide ? activeSlide.id : activeIndex + 1}`, 0, 0);
   }
   ctx.restore();
-  return { blockBottom, blockWidth };
+  return { blockBottom: height, blockWidth: width };
 }
 
 function drawRetentionHook(ctx, { width, height, time, slideStart, text, style, isVertical }) {
@@ -473,19 +460,9 @@ export function drawStudioFrame({
     drawRetentionHook(ctx, { width, height, time, slideStart, text: rawOverlay.trim(), style: hookStyle, isVertical });
   }
 
-  // Compute active slide bounds so captions render INSIDE the video block near its bottom
-  const maxImgHeight = height * 0.88;
-  const maxImgWidth = isVertical ? width * 0.96 : width * 0.94;
-  let videoBlockBottom = height / 2 + maxImgHeight / 2;
-  let videoBlockWidth = maxImgWidth;
-  if (activeImg && activeImg.naturalWidth && activeImg.naturalHeight) {
-    const ratio = Math.min(maxImgWidth / activeImg.naturalWidth, maxImgHeight / activeImg.naturalHeight);
-    videoBlockBottom = height / 2 + (activeImg.naturalHeight * ratio) / 2;
-    videoBlockWidth = activeImg.naturalWidth * ratio;
-  } else {
-    videoBlockBottom = height / 2 + (isVertical ? height * 0.68 : height * 0.76) / 2;
-    videoBlockWidth = isVertical ? width * 0.88 : width * 0.78;
-  }
+  // Full-screen slide bounds so captions render inside the bottom of the screen with padding
+  const videoBlockBottom = height;
+  const videoBlockWidth = width;
 
   // Modern Animated Bottom Captions (rendered inside the video block with bottom padding)
   if (captionStyle && captionStyle !== 'none') {

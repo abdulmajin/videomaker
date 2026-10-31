@@ -96,30 +96,30 @@ export function computeSlideTransform({
 
   switch (animType) {
     case 'zoom-in': {
-      // Subtle zoom in entrance from 0.95 to 1.00
-      opacity = 0.35 + 0.65 * p;
-      scale = 0.95 + 0.05 * p;
+      // Subtle full-bleed zoom settle (never < 1.0 so no border space ever shows)
+      opacity = 0.4 + 0.6 * p;
+      scale = 1.04 - 0.04 * p;
       break;
     }
 
     case 'zoom-out': {
-      // Subtle settle from 1.05 down to 1.00
-      opacity = 0.35 + 0.65 * p;
-      scale = 1.05 - 0.05 * p;
+      // Subtle settle from 1.07 down to 1.00
+      opacity = 0.4 + 0.6 * p;
+      scale = 1.07 - 0.07 * p;
       break;
     }
 
     case 'pop': {
-      // Subtle soft spring to 1.00
+      // Soft spring settle without shrinking below 1.00
       opacity = easeOutQuad(p);
-      scale = 0.92 + 0.08 * easeOutBack(p);
+      scale = Math.max(1.0, 1.0 + 0.05 * Math.sin(p * Math.PI));
       break;
     }
 
     case 'breathe': {
-      // Gentle settle into view
-      opacity = 0.4 + 0.6 * p;
-      scale = 0.97 + 0.03 * p;
+      // Gentle settle into view without shrinking below 1.00
+      opacity = 0.45 + 0.55 * p;
+      scale = 1.03 - 0.03 * p;
       break;
     }
 
