@@ -7,7 +7,7 @@
  */
 
 import { computeSlideTransform, getSlideAnimation } from './animations.js';
-import { drawKaraokeCaptions, gradeFilter, drawBrand } from './frameExtras.js';
+import { drawModernBottomCaptions, gradeFilter, drawBrand } from './frameExtras.js';
 
 // ─── Exported constants ────────────────────────────────────────────────────────
 
@@ -202,82 +202,6 @@ function drawSlideImage({ ctx, img, activeIndex, activeSlide, animType, slideSta
   ctx.restore();
 }
 
-// ─── Caption drawing ──────────────────────────────────────────────────────────
-
-function drawCaptions(ctx, { width, height, captionStyle, slideNumber, text, isVertical }) {
-  if (!text) return;
-  ctx.save();
-
-  if (captionStyle === 'social-pop') {
-    const fs = isVertical ? Math.max(30, Math.round(width * 0.048)) : Math.max(26, Math.round(width * 0.028));
-    ctx.font = `900 ${fs}px system-ui, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const lines = wrapText(ctx, text.toUpperCase(), width * 0.88);
-    const lh = fs * 1.35;
-    const startY = height - lines.length * lh - (isVertical ? 110 : 50);
-    lines.forEach((line, i) => {
-      const ly = startY + i * lh;
-      const tw = ctx.measureText(line).width;
-      ctx.fillStyle = 'rgba(0,0,0,0.85)';
-      drawRoundedRect(ctx, width / 2 - tw / 2 - 18, ly - fs / 2 - 6, tw + 36, fs + 12, 8);
-      ctx.fill();
-      ctx.strokeStyle = '#000'; ctx.lineWidth = 4;
-      ctx.strokeText(line, width / 2, ly);
-      ctx.fillStyle = '#fde047';
-      ctx.fillText(line, width / 2, ly);
-    });
-  } else if (captionStyle === 'classic-cinema') {
-    const fs = isVertical ? Math.max(26, Math.round(width * 0.040)) : Math.max(22, Math.round(width * 0.024));
-    ctx.font = `600 ${fs}px system-ui, sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    const lines = wrapText(ctx, text, width * 0.84);
-    const lh = fs * 1.3;
-    const startY = height - (lines.length - 1) * lh - (isVertical ? 90 : 36);
-    lines.forEach((line, i) => {
-      const ly = startY + i * lh;
-      ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 2;
-      ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.lineWidth = 3;
-      ctx.strokeText(line, width / 2, ly);
-      ctx.fillStyle = '#fff'; ctx.fillText(line, width / 2, ly);
-    });
-  } else if (captionStyle === 'top-banner') {
-    const bh = isVertical ? 65 : 54;
-    ctx.fillStyle = 'rgba(15,23,42,0.92)'; ctx.fillRect(0, 0, width, bh);
-    ctx.fillStyle = '#0d9488'; ctx.fillRect(0, bh - 3, width, 3);
-    const tag = `SLIDE ${slideNumber}:`;
-    ctx.font = '700 13px system-ui'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#14b8a6'; ctx.fillText(tag, 18, bh / 2);
-    const tw = ctx.measureText(tag).width;
-    ctx.fillStyle = '#fff'; ctx.font = '500 15px system-ui';
-    ctx.fillText(text.slice(0, 110) + (text.length > 110 ? '…' : ''), 28 + tw, bh / 2);
-  } else if (captionStyle !== 'none') {
-    // modern-card (default)
-    const fs = isVertical ? Math.max(24, Math.round(width * 0.038)) : Math.max(22, Math.round(width * 0.023));
-    ctx.font = `500 ${fs}px system-ui, sans-serif`;
-    const lines = wrapText(ctx, text, width * (isVertical ? 0.88 : 0.82));
-    const lh = fs * 1.35;
-    const badgeH = 22; const padY = 16; const padX = 26;
-    const boxH = lines.length * lh + padY * 2 + badgeH;
-    const boxW = Math.min(width * 0.94, width * (isVertical ? 0.88 : 0.82) + padX * 2);
-    const boxX = (width - boxW) / 2;
-    const boxY = height - boxH - (isVertical ? 70 : 34);
-    ctx.fillStyle = 'rgba(15,23,42,0.88)';
-    drawRoundedRect(ctx, boxX, boxY, boxW, boxH, 14); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.fillStyle = '#0d9488';
-    drawRoundedRect(ctx, boxX + padX, boxY + padY, 88, 20, 10); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.font = '700 11px system-ui';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(`SLIDE ${slideNumber}`, boxX + padX + 44, boxY + padY + 10);
-    ctx.fillStyle = '#fff'; ctx.font = `500 ${fs}px system-ui, sans-serif`;
-    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-    let ly = boxY + padY + badgeH + fs;
-    for (const line of lines) { ctx.fillText(line, boxX + padX, ly); ly += lh; }
-  }
-  ctx.restore();
-}
-
 function drawRetentionHook(ctx, { width, height, time, slideStart, text, style, isVertical }) {
   const elapsed = time - slideStart;
   if (elapsed < 0 || elapsed > 1.8) return;
@@ -436,7 +360,7 @@ export function drawStudioFrame({
   preloadedLayerImages = new Map(),
   animationMode = 'random',
   slideAnimations = {},
-  captionStyle = 'modern-card',
+  captionStyle = 'hormozi-pop',
   hookStyle = 'punch-stamp',
   textOverlays = {},
   layers = [],
@@ -541,10 +465,19 @@ export function drawStudioFrame({
     drawRetentionHook(ctx, { width, height, time, slideStart, text: rawOverlay.trim(), style: hookStyle, isVertical });
   }
 
-  // Captions (karaoke falls back to Social Pop when there are no word timestamps)
-  const karaokeDrawn = captionStyle === 'karaoke' && drawKaraokeCaptions(ctx, { width, height, time, words, isVertical });
-  if (hasCaptions && !karaokeDrawn) {
-    drawCaptions(ctx, { width, height, captionStyle: captionStyle === 'karaoke' ? 'social-pop' : captionStyle, slideNumber: activeSlide.id || activeIndex + 1, totalSlides: slides.length, text: activeSlide.text, isVertical });
+  // Modern Animated Bottom Captions
+  if (captionStyle && captionStyle !== 'none') {
+    drawModernBottomCaptions(ctx, {
+      width,
+      height,
+      time,
+      words,
+      slideText: activeSlide?.text || '',
+      slideStart,
+      slideEnd,
+      captionStyle,
+      isVertical,
+    });
   }
 
   drawVisibleLayers(ctx, layers, time, width, height, preloadedLayerImages);

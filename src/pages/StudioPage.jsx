@@ -56,7 +56,7 @@ const DEFAULT_PROJECT = {
   bgmVolume: 0.15,
   autoDuck: true,
   animationMode: 'random',
-  captionStyle: 'modern-card',
+  captionStyle: 'hormozi-pop',
   hookStyle: 'punch-stamp',
   slideAnimations: {},
   textOverlays: {},

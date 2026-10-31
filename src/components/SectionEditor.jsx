@@ -28,7 +28,7 @@ export default function SectionEditor({
   imageEngine = 'google-imagen',
   visualStyle = 'cinematic',
   animationMode = 'random',
-  captionStyle = 'modern-card',
+  captionStyle = 'hormozi-pop',
   hookStyle = 'punch-stamp',
   aspectRatio = '16:9',
   whisperModel = 'Xenova/whisper-tiny.en',

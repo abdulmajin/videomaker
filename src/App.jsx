@@ -34,47 +34,19 @@ import ResizablePreview from './components/ResizablePreview';
 import { getSnapshotInfo, loadSnapshot, deleteSnapshot } from './lib/autosave';
 import { useAutosave } from './lib/useAutosave';
 import { useUndoHistory } from './lib/useUndoHistory';
-import { COLOR_GRADES, DEFAULT_BRAND, buildChapters, loadImage } from './lib/frameExtras';
+import { COLOR_GRADES, DEFAULT_BRAND, buildChapters, loadImage, normalizeCaptionStyle } from './lib/frameExtras';
 import { SFX_MODES } from './lib/sfx';
 import { supportsFastExport } from './lib/fastExport';
 import { mergeSections, isReadySection, dataUrlToBlob, overlaysToStudioLayers } from './lib/mergeSections';
+import { createZipBlob, readZip, isZipBlob, extFromMime, mimeFromName, safeEntryName } from './lib/projectZip';
 
-// ─── Helpers: blob URL ↔ base64 data URL (for project save/restore) ──────────
-async function blobUrlToDataUrl(url) {
-  if (!url || url.startsWith('data:')) return url;
+// ─── Helpers: resolve a blob:/data:/http URL to a raw Blob (for project save) ──
+async function urlToBlob(url) {
+  if (!url) return null;
   try {
     const resp = await fetch(url);
-    const blob = await resp.blob();
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
-}
-
-function blobToDataUrl(blob) {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result);
-    reader.onerror = () => resolve(null);
-    reader.readAsDataURL(blob);
-  });
-}
-
-function dataUrlToBlobUrl(dataUrl) {
-  if (!dataUrl || !dataUrl.startsWith('data:')) return dataUrl;
-  try {
-    const [header, b64] = dataUrl.split(',');
-    const mime = header.match(/:(.*?);/)?.[1] || 'application/octet-stream';
-    const byteStr = atob(b64);
-    const ab = new ArrayBuffer(byteStr.length);
-    const ia = new Uint8Array(ab);
-    for (let i = 0; i < byteStr.length; i++) ia[i] = byteStr.charCodeAt(i);
-    return URL.createObjectURL(new Blob([ab], { type: mime }));
+    if (!resp.ok) return null;
+    return await resp.blob();
   } catch {
     return null;
   }
@@ -181,7 +153,7 @@ export default function App() {
 
   // Animation, Captions & Retention Hooks
   const [animationMode, setAnimationMode] = useState('random');
-  const [captionStyle, setCaptionStyle] = useState('modern-card');
+  const [captionStyle, setCaptionStyle] = useState('hormozi-pop');
   const [hookStyle, setHookStyle] = useState('punch-stamp'); // 'punch-stamp' | 'chapter-pill' | 'bottom-badge' | 'none'
 
   // Look, Brand Kit & Sound Effects
@@ -294,7 +266,7 @@ export default function App() {
         if (d.imageEngine) setImageEngine(d.imageEngine);
         if (d.visualStyle) setVisualStyle(d.visualStyle);
         if (d.animationMode) setAnimationMode(d.animationMode);
-        if (d.captionStyle) setCaptionStyle(d.captionStyle);
+        if (d.captionStyle) setCaptionStyle(normalizeCaptionStyle(d.captionStyle));
         if (d.hookStyle) setHookStyle(d.hookStyle);
         if (d.resolution) setResolution(d.resolution);
         if (d.colorGrade) setColorGrade(d.colorGrade);
@@ -686,38 +658,66 @@ export default function App() {
   };
 
   // Project Save & Load
+  // Projects are saved as a ZIP bundle: a small `project.json` + raw binary assets.
+  // (The old single-JSON format embedded every image/audio as base64 text and
+  // crashed with "RangeError: Invalid string length" on long projects.)
   const handleSaveProject = async () => {
-    setSaveNotice('⏳ Serializing audio & images…');
+    try {
+      setSaveNotice('⏳ Collecting audio & images…');
 
-    // Serialize each section's audio and images to base64 data URLs
-    const serializedSections = await Promise.all(
-      sections.map(async (s) => {
-        // Audio
-        const audioDataUrl = s.audioUrl ? await blobUrlToDataUrl(s.audioUrl) : null;
+      const entries = [];
+      const addAsset = (path, blob) => {
+        entries.push({ name: path, data: blob });
+        return path;
+      };
 
-        // Generated images (AI-produced)
-        const generatedImages = {};
-        for (const [idx, imgObj] of Object.entries(s.generatedImages || {})) {
-          const dataUrl = imgObj?.url ? await blobUrlToDataUrl(imgObj.url) : null;
-          if (dataUrl) generatedImages[idx] = { ...imgObj, url: dataUrl };
+      // Images: store the binary as an asset; keep remote URLs we couldn't fetch as plain links
+      const packImages = async (images, dir, prefix) => {
+        const out = {};
+        for (const [idx, imgObj] of Object.entries(images || {})) {
+          if (!imgObj?.url) continue;
+          const blob = await urlToBlob(imgObj.url);
+          const { url, ...rest } = imgObj;
+          if (blob) {
+            out[idx] = {
+              ...rest,
+              asset: addAsset(`${dir}/${prefix}_${idx}.${extFromMime(blob.type)}`, blob),
+              assetType: blob.type,
+            };
+          } else if (!url.startsWith('blob:') && !url.startsWith('data:')) {
+            out[idx] = { ...rest, url };
+          }
         }
+        return out;
+      };
 
-        // Manual images (user-replaced)
-        const manualImages = {};
-        for (const [idx, imgObj] of Object.entries(s.manualImages || {})) {
-          const dataUrl = imgObj?.url ? await blobUrlToDataUrl(imgObj.url) : null;
-          if (dataUrl) manualImages[idx] = { ...imgObj, url: dataUrl };
-        }
+      // Process sections sequentially to keep memory usage low on long projects
+      const serializedSections = [];
+      for (let si = 0; si < sections.length; si++) {
+        const s = sections[si];
+        const dir = `assets/section_${String(si + 1).padStart(2, '0')}`;
 
-        // Images actually shown per slide, and the uploaded originals
-        const effectiveImageDataUrls = await Promise.all(
-          (s.effectiveImageUrls || []).map((u) => (u ? blobUrlToDataUrl(u) : null))
-        );
-        const uploadedImages = await Promise.all(
-          (s.images || []).map(async (f) => ({ name: f.name, type: f.type, dataUrl: await blobToDataUrl(f) }))
-        );
+        // Voice audio (prefer the in-memory Blob, fall back to its playback URL)
+        const audioBlob = s.audio instanceof Blob ? s.audio : await urlToBlob(s.audioUrl);
+        const audioAsset = audioBlob
+          ? addAsset(`${dir}/voice.${extFromMime(audioBlob.type)}`, audioBlob)
+          : null;
 
-        return {
+        const generatedImages = await packImages(s.generatedImages, dir, 'generated');
+        const manualImages = await packImages(s.manualImages, dir, 'manual');
+
+        // Uploaded originals (File objects are added directly — no copying)
+        const uploadedImages = (s.images || []).map((f, n) => ({
+          name: f.name,
+          type: f.type,
+          asset: addAsset(
+            `${dir}/uploads/${String(n + 1).padStart(3, '0')}_${safeEntryName(f.name)}`,
+            f
+          ),
+        }));
+
+        // Note: effectiveImageUrls are NOT saved — they are derived from the images above
+        serializedSections.push({
           id: s.id,
           title: s.title,
           scriptText: s.scriptText,
@@ -728,44 +728,64 @@ export default function App() {
           slideAnimations: s.slideAnimations,
           slideFilters: s.slideFilters,
           customTextOverlays: s.customTextOverlays,
-          audioDataUrl,
+          audioAsset,
+          audioAssetType: audioBlob?.type || '',
           duration: s.duration,
           rows: s.rows,
           words: s.words,
           generatedImages,
           manualImages,
-          effectiveImageDataUrls,
           uploadedImages,
-        };
-      })
-    );
+        });
+      }
 
-    const projectPayload = {
-      version: '2.2',
-      savedAt: new Date().toISOString(),
-      projectTitle,
-      aspectRatio,
-      animationMode,
-      captionStyle,
-      hookStyle,
-      imageEngine,
-      visualStyle,
-      bgmVolume,
-      autoDuck,
-      bgmName: bgmFile?.name || '',
-      bgmDataUrl: bgmFile ? await blobToDataUrl(bgmFile) : null,
-      colorGrade,
-      sfx,
-      brand: { ...brand, logoFile: null, logoName: brand.logoFile?.name || '' },
-      logoDataUrl: brand.logoFile ? await blobToDataUrl(brand.logoFile) : null,
-      sections: serializedSections,
-    };
+      const bgmAsset = bgmFile
+        ? addAsset(`assets/music_${safeEntryName(bgmFile.name || 'bgm')}`, bgmFile)
+        : null;
+      const logoAsset = brand.logoFile
+        ? addAsset(`assets/logo_${safeEntryName(brand.logoFile.name || 'logo')}`, brand.logoFile)
+        : null;
 
-    const json = JSON.stringify(projectPayload, null, 2);
-    const safeTitle = (projectTitle || 'project').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
-    downloadText(json, `${safeTitle}.videomaker.json`, 'application/json');
-    setSaveNotice('✓ Project saved to file!');
-    setTimeout(() => setSaveNotice(''), 3000);
+      const projectPayload = {
+        format: 'videomaker-bundle',
+        version: '3.0',
+        savedAt: new Date().toISOString(),
+        projectTitle,
+        aspectRatio,
+        animationMode,
+        captionStyle,
+        hookStyle,
+        imageEngine,
+        visualStyle,
+        bgmVolume,
+        autoDuck,
+        bgmName: bgmFile?.name || '',
+        bgmAsset,
+        bgmAssetType: bgmFile?.type || '',
+        colorGrade,
+        sfx,
+        brand: { ...brand, logoFile: null, logoName: brand.logoFile?.name || '' },
+        logoAsset,
+        logoAssetType: brand.logoFile?.type || '',
+        sections: serializedSections,
+      };
+
+      // project.json is tiny now (no base64), so stringify is safe
+      entries.unshift({ name: 'project.json', data: JSON.stringify(projectPayload) });
+
+      const zipBlob = await createZipBlob(entries, (done, total) =>
+        setSaveNotice(`⏳ Packing project… ${done}/${total} files`)
+      );
+
+      const safeTitle = (projectTitle || 'project').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
+      downloadBlob(zipBlob, `${safeTitle}.videomaker.zip`);
+      setSaveNotice(`✓ Project saved (${(zipBlob.size / (1024 * 1024)).toFixed(1)} MB, ${entries.length} files)`);
+      setTimeout(() => setSaveNotice(''), 4000);
+    } catch (err) {
+      console.error('Project save failed:', err);
+      setSaveNotice('');
+      alert(`Could not save project: ${err.message}`);
+    }
   };
 
   const handleLoadProjectFile = async (e) => {
@@ -775,13 +795,43 @@ export default function App() {
     e.target.value = '';
 
     try {
-      const text = await file.text();
-      const data = JSON.parse(text);
+      setSaveNotice('⏳ Loading project…');
+
+      // Resolvers abstract over the two formats:
+      //  • New ZIP bundle  → assets are binary entries referenced by path
+      //  • Legacy .json    → assets are embedded base64 data URLs
+      let data;
+      let getAudio, getImage, getUpload, getBgm, getLogo;
+
+      if (await isZipBlob(file)) {
+        const zip = await readZip(file);
+        const projectEntry = zip.get('project.json');
+        if (!projectEntry) throw new Error('project.json is missing from this bundle.');
+        data = JSON.parse(await projectEntry.getText());
+
+        const fromZip = async (path, type) => {
+          if (!path) return null;
+          const entry = zip.get(path);
+          return entry ? entry.getBlob(type || mimeFromName(path)) : null;
+        };
+        getAudio = (s) => fromZip(s.audioAsset, s.audioAssetType);
+        getImage = (o) => fromZip(o?.asset, o?.assetType);
+        getUpload = (img) => fromZip(img.asset, img.type);
+        getBgm = () => fromZip(data.bgmAsset, data.bgmAssetType);
+        getLogo = () => fromZip(data.logoAsset, data.logoAssetType);
+      } else {
+        data = JSON.parse(await file.text());
+        getAudio = async (s) => dataUrlToBlob(s.audioDataUrl);
+        getImage = async (o) => (o?.url?.startsWith('data:') ? dataUrlToBlob(o.url) : null);
+        getUpload = async (img) => dataUrlToBlob(img.dataUrl);
+        getBgm = async () => dataUrlToBlob(data.bgmDataUrl);
+        getLogo = async () => dataUrlToBlob(data.logoDataUrl);
+      }
 
       if (data.projectTitle) setProjectTitle(data.projectTitle);
       if (data.aspectRatio) setAspectRatio(data.aspectRatio);
       if (data.animationMode) setAnimationMode(data.animationMode);
-      if (data.captionStyle) setCaptionStyle(data.captionStyle);
+      if (data.captionStyle) setCaptionStyle(normalizeCaptionStyle(data.captionStyle));
       if (data.hookStyle) setHookStyle(data.hookStyle);
       if (data.imageEngine) setImageEngine(data.imageEngine);
       if (data.visualStyle) setVisualStyle(data.visualStyle);
@@ -789,14 +839,14 @@ export default function App() {
       if (data.autoDuck != null) setAutoDuck(data.autoDuck);
       if (data.colorGrade) setColorGrade(data.colorGrade);
       if (data.sfx) setSfx(data.sfx);
-      const bgmBlob = dataUrlToBlob(data.bgmDataUrl);
+      const bgmBlob = await getBgm();
       if (bgmBlob) {
         const f = new File([bgmBlob], data.bgmName || 'music', { type: bgmBlob.type });
         setBgmFile(f);
         setBgmUrl(URL.createObjectURL(f));
       }
       if (data.brand) {
-        const logoBlob = dataUrlToBlob(data.logoDataUrl);
+        const logoBlob = await getLogo();
         setBrand({
           ...DEFAULT_BRAND,
           ...data.brand,
@@ -805,33 +855,43 @@ export default function App() {
       }
       setMergedData(null);
 
+      // Restore an image map ({ idx: { url, ... } }) to playable blob: URLs
+      const restoreImages = async (images) => {
+        const out = {};
+        for (const [imgIdx, imgObj] of Object.entries(images || {})) {
+          const blob = await getImage(imgObj);
+          const { asset, assetType, ...rest } = imgObj || {};
+          const url = blob
+            ? URL.createObjectURL(blob)
+            : imgObj?.url && !imgObj.url.startsWith('data:')
+              ? imgObj.url
+              : null;
+          if (url) out[imgIdx] = { ...rest, url };
+        }
+        return out;
+      };
+
       if (Array.isArray(data.sections) && data.sections.length > 0) {
-        const restoredSections = data.sections.map((s, idx) => {
+        const restoredSections = [];
+        for (let idx = 0; idx < data.sections.length; idx++) {
+          const s = data.sections[idx];
+          setSaveNotice(`⏳ Restoring section ${idx + 1}/${data.sections.length}…`);
+
           // Restore the voice audio as a Blob (merging needs it) plus a playback URL
-          const audio = dataUrlToBlob(s.audioDataUrl);
+          const audio = await getAudio(s);
           const audioUrl = audio ? URL.createObjectURL(audio) : null;
-          const images = (s.uploadedImages || [])
-            .map((img) => {
-              const b = dataUrlToBlob(img.dataUrl);
-              return b ? new File([b], img.name, { type: img.type || b.type }) : null;
-            })
-            .filter(Boolean);
 
-          // Restore generated image URLs
-          const generatedImages = {};
-          for (const [imgIdx, imgObj] of Object.entries(s.generatedImages || {})) {
-            const url = imgObj?.url ? dataUrlToBlobUrl(imgObj.url) : null;
-            if (url) generatedImages[imgIdx] = { ...imgObj, url };
+          const images = [];
+          for (const img of s.uploadedImages || []) {
+            const b = await getUpload(img);
+            if (b) images.push(new File([b], img.name, { type: img.type || b.type }));
           }
 
-          // Restore manual image URLs
-          const manualImages = {};
-          for (const [imgIdx, imgObj] of Object.entries(s.manualImages || {})) {
-            const url = imgObj?.url ? dataUrlToBlobUrl(imgObj.url) : null;
-            if (url) manualImages[imgIdx] = { ...imgObj, url };
-          }
+          // Restore generated (AI) and manual (user-replaced) image URLs
+          const generatedImages = await restoreImages(s.generatedImages);
+          const manualImages = await restoreImages(s.manualImages);
 
-          return {
+          restoredSections.push({
             ...createNewSection(idx),
             ...s,
             id: s.id || `sec-${Date.now()}-${idx}`,
@@ -844,18 +904,22 @@ export default function App() {
             effectiveImageDataUrls: undefined,
             uploadedImages: undefined,
             audioDataUrl: undefined,
+            audioAsset: undefined,
+            audioAssetType: undefined,
             generatedImages,
             manualImages,
             // duration will be recalculated when audio loads
-          };
-        });
+          });
+        }
         setSections(restoredSections);
       }
 
       setSaveNotice('✓ Project loaded successfully!');
       setTimeout(() => setSaveNotice(''), 3000);
     } catch (err) {
-      alert(`Could not parse project file: ${err.message}`);
+      console.error('Project load failed:', err);
+      setSaveNotice('');
+      alert(`Could not open project file: ${err.message}`);
     }
   };
 
@@ -1009,7 +1073,7 @@ export default function App() {
               type="button"
               className="ghost small-btn"
               onClick={handleSaveProject}
-              title="Save project to .videomaker.json"
+              title="Save project as a .videomaker.zip bundle (handles long projects with many images)"
             >
               💾 Save Project
             </button>
@@ -1018,14 +1082,14 @@ export default function App() {
               type="button"
               className="ghost small-btn"
               onClick={() => loadFileInputRef.current?.click()}
-              title="Load saved .videomaker.json"
+              title="Load a saved project (.videomaker.zip, or older .videomaker.json)"
             >
               📂 Load Project
             </button>
             <input
               type="file"
               ref={loadFileInputRef}
-              accept=".json,.videomaker.json"
+              accept=".zip,.json,.videomaker.zip,.videomaker.json"
               style={{ display: 'none' }}
               onChange={handleLoadProjectFile}
             />
@@ -1218,7 +1282,7 @@ export default function App() {
           </label>
 
           <label>
-            Caption / Subtitle Style:
+            Bottom Caption / Subtitle Style:
             <select
               value={captionStyle}
               onChange={(e) => setCaptionStyle(e.target.value)}
@@ -1229,6 +1293,9 @@ export default function App() {
                 </option>
               ))}
             </select>
+            <small className="hint">
+              Animated bottom-of-video subtitles with word &amp; phrase motion.
+            </small>
           </label>
 
           <label>
@@ -1247,6 +1314,39 @@ export default function App() {
               Pops bold hook keywords on-screen for the first 1.8s of each slide.
             </small>
           </label>
+        </div>
+
+        {/* Modern Bottom Caption Style & Animation Quick Picker */}
+        <div className="caption-style-showcase">
+          <div className="caption-style-showcase-header">
+            <span className="caption-style-showcase-title">
+              ✨ Modern Animated Bottom Captions
+            </span>
+            <span className="caption-style-showcase-sub">
+              Displays at the bottom of the video with live word-by-word &amp; phrase animations
+            </span>
+          </div>
+          <div className="caption-style-cards-grid">
+            {CAPTION_STYLES.map((c) => {
+              const active = captionStyle === c.id;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  className={`caption-style-card caption-theme-${c.id} ${active ? 'active' : ''}`}
+                  onClick={() => setCaptionStyle(c.id)}
+                >
+                  <div className="caption-style-card-top">
+                    <span className="caption-style-card-name">{c.label}</span>
+                    {c.badge && (
+                      <span className="caption-style-card-badge">{c.badge}</span>
+                    )}
+                  </div>
+                  <div className="caption-style-card-desc">{c.desc}</div>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </section>
 

@@ -131,7 +131,7 @@ export async function makerFileToStudioProject(data) {
     bgmVolume: data.bgmVolume ?? 0.15,
     autoDuck: data.autoDuck ?? true,
     animationMode: data.animationMode || 'random',
-    captionStyle: data.captionStyle || 'modern-card',
+    captionStyle: data.captionStyle || 'hormozi-pop',
     hookStyle: data.hookStyle || 'punch-stamp',
     slideAnimations: merged.slideAnimations,
     textOverlays: merged.textOverlays,

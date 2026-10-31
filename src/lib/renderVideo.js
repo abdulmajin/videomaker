@@ -2,17 +2,67 @@
 // Features Canva-style slide animations, kinetic text overlays/retention hooks, BGM mixer, and customizable captions
 
 import { computeSlideTransform, getSlideAnimation } from './animations';
-import { drawKaraokeCaptions, gradeFilter, drawBrand } from './frameExtras';
+import { drawModernBottomCaptions, gradeFilter, drawBrand } from './frameExtras';
 import { scheduleSfx } from './sfx';
 import { supportsFastExport, mixAudioOffline, encodeMp4 } from './fastExport';
 
 export const CAPTION_STYLES = [
-  { id: 'karaoke', label: '🎤 Karaoke (Word-by-Word Highlight)' },
-  { id: 'modern-card', label: '🪪 Modern Card (Frosted Pill with Badge)' },
-  { id: 'social-pop', label: '🔥 Social Pop (TikTok / Reels Bold Yellow)' },
-  { id: 'classic-cinema', label: '🎬 Classic Cinema (Clean Drop-Shadow Subtitles)' },
-  { id: 'top-banner', label: '📰 Top Banner (Header Bar)' },
-  { id: 'none', label: '🚫 None (No Subtitles)' },
+  {
+    id: 'hormozi-pop',
+    label: '⚡ Hormozi Pop (Word Bounce & Yellow Highlight)',
+    shortLabel: '⚡ Hormozi Pop',
+    animTag: 'Word Bounce',
+    desc: 'Bold bottom captions with elastic word-by-word bounce & electric yellow highlight',
+  },
+  {
+    id: 'capcut-pill',
+    label: '🎯 CapCut Pill (Animated Sliding Word Box)',
+    shortLabel: '🎯 CapCut Pill',
+    animTag: 'Sliding Pill',
+    desc: 'Vibrant pink-violet pill jumps onto each spoken word with a snappy pop',
+  },
+  {
+    id: 'glass-glow',
+    label: '✨ Glass Glow Bar (Frosted Bottom Capsule + Slide-Up)',
+    shortLabel: '✨ Glass Glow',
+    animTag: 'Slide-Up + Lift',
+    desc: 'Frosted dark bottom capsule with gradient border & glowing sky-blue active word lift',
+  },
+  {
+    id: 'neon-pulse',
+    label: '💜 Neon Cyber Pulse (Glowing Wave & Flash)',
+    shortLabel: '💜 Neon Pulse',
+    animTag: 'Kinetic Wave',
+    desc: 'Continuous wave motion at the bottom with neon cyan & purple glow pulse',
+  },
+  {
+    id: 'typewriter-bar',
+    label: '⌨️ Typewriter Stream (Progressive Reveal + Cursor)',
+    shortLabel: '⌨️ Typewriter',
+    animTag: 'Live Typing',
+    desc: 'Editorial bottom bar that types out words in real time with a blinking gold cursor',
+  },
+  {
+    id: 'cinema-rise',
+    label: '🎬 Studio Rise (Smooth Word Rise & Fade)',
+    shortLabel: '🎬 Studio Rise',
+    animTag: 'Smooth Rise',
+    desc: 'Clean cinematic bottom subtitles where each word gently rises and illuminates as spoken',
+  },
+  {
+    id: 'fire-stamp',
+    label: '🔥 Viral Fire Stamp (Gradient Pill + Tilt Bounce)',
+    shortLabel: '🔥 Fire Stamp',
+    animTag: 'Tilt Bounce',
+    desc: 'High-impact bottom bar with fiery orange-red stamp and micro-tilt bounce on active words',
+  },
+  {
+    id: 'none',
+    label: '🚫 None (No Subtitles)',
+    shortLabel: '🚫 No Captions',
+    animTag: 'Off',
+    desc: 'Hide bottom subtitles completely',
+  },
 ];
 
 export const HOOK_STYLES = [
@@ -327,7 +377,7 @@ export function drawVideoFrame({
   preloadedImages = [],
   animationMode = 'random',
   slideAnimations = {},
-  captionStyle = 'modern-card',
+  captionStyle = 'hormozi-pop',
   hookStyle = 'punch-stamp',
   textOverlays = {},
   customTextOverlays = [],
@@ -379,12 +429,8 @@ export function drawVideoFrame({
     canvasHeight: height,
   });
 
-  // Target image bounding box
-  const hasBottomCaptions =
-    captionStyle === 'karaoke' ||
-    captionStyle === 'modern-card' ||
-    captionStyle === 'social-pop' ||
-    captionStyle === 'classic-cinema';
+  // Target image bounding box — all active caption styles render at the bottom of the video
+  const hasBottomCaptions = Boolean(captionStyle && captionStyle !== 'none');
 
   const maxImgHeight = isVertical
     ? height * 0.58
@@ -457,18 +503,17 @@ export function drawVideoFrame({
     });
   }
 
-  // 6. Draw Selected Caption Style (clean subtitles). Karaoke needs word
-  // timestamps; without them it falls back to the Social Pop look.
-  const karaokeDrawn =
-    captionStyle === 'karaoke' && drawKaraokeCaptions(ctx, { width, height, time, words, isVertical });
-  if (captionStyle !== 'none' && !karaokeDrawn && activeSlide && activeSlide.text) {
-    drawCaptions(ctx, {
+  // 6. Draw Modern Animated Bottom Captions (uses Whisper words or auto-synthesized phrase timing)
+  if (captionStyle && captionStyle !== 'none') {
+    drawModernBottomCaptions(ctx, {
       width,
       height,
-      captionStyle: captionStyle === 'karaoke' ? 'social-pop' : captionStyle,
-      slideNumber: activeSlide.id || activeIndex + 1,
-      totalSlides: slides.length,
-      text: activeSlide.text,
+      time,
+      words,
+      slideText: activeSlide?.text || '',
+      slideStart,
+      slideEnd,
+      captionStyle,
       isVertical,
     });
   }
@@ -779,146 +824,6 @@ function drawRetentionHook(ctx, { width, height, time, slideStart, text, style, 
   ctx.restore();
 }
 
-// Subtitle & Caption Style Drawer
-function drawCaptions(ctx, { width, height, captionStyle, slideNumber, text, isVertical }) {
-  ctx.save();
-
-  if (captionStyle === 'social-pop') {
-    // 🔥 TikTok / Reels Punchy Pop: Bold uppercase text with yellow highlight
-    const fontSize = isVertical
-      ? Math.max(30, Math.round(width * 0.048))
-      : Math.max(26, Math.round(width * 0.028));
-    ctx.font = `900 ${fontSize}px system-ui, -apple-system, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    const maxTextWidth = width * 0.88;
-    const lines = wrapText(ctx, text.toUpperCase(), maxTextWidth);
-    const lineHeight = fontSize * 1.35;
-    const totalTextHeight = lines.length * lineHeight;
-    const startY = height - totalTextHeight - (isVertical ? 110 : 50);
-
-    lines.forEach((line, idx) => {
-      const lineY = startY + idx * lineHeight;
-      const textWidth = ctx.measureText(line).width;
-      const padX = 18;
-      const padY = 6;
-
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-      drawRoundedRect(
-        ctx,
-        width / 2 - textWidth / 2 - padX,
-        lineY - fontSize / 2 - padY,
-        textWidth + padX * 2,
-        fontSize + padY * 2,
-        8
-      );
-      ctx.fill();
-
-      ctx.strokeStyle = '#000000';
-      ctx.lineWidth = 4;
-      ctx.strokeText(line, width / 2, lineY);
-
-      ctx.fillStyle = '#fde047';
-      ctx.fillText(line, width / 2, lineY);
-    });
-  } else if (captionStyle === 'classic-cinema') {
-    // 🎬 Classic Cinema: Clean bottom subtitles with soft shadow
-    const fontSize = isVertical
-      ? Math.max(26, Math.round(width * 0.040))
-      : Math.max(22, Math.round(width * 0.024));
-    ctx.font = `600 ${fontSize}px system-ui, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
-
-    const maxTextWidth = width * 0.84;
-    const lines = wrapText(ctx, text, maxTextWidth);
-    const lineHeight = fontSize * 1.3;
-    const startY = height - (lines.length - 1) * lineHeight - (isVertical ? 90 : 36);
-
-    lines.forEach((line, idx) => {
-      const lineY = startY + idx * lineHeight;
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
-      ctx.shadowBlur = 10;
-      ctx.shadowOffsetY = 2;
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
-      ctx.lineWidth = 3;
-      ctx.strokeText(line, width / 2, lineY);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(line, width / 2, lineY);
-    });
-  } else if (captionStyle === 'top-banner') {
-    // 📰 Top Banner: Headline style header bar
-    const bannerH = isVertical ? 65 : 54;
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
-    ctx.fillRect(0, 0, width, bannerH);
-    ctx.fillStyle = '#0d9488';
-    ctx.fillRect(0, bannerH - 3, width, 3);
-
-    ctx.fillStyle = '#14b8a6';
-    const tagText = `SLIDE ${slideNumber}:`;
-    ctx.font = '700 13px system-ui, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(tagText, 18, bannerH / 2);
-
-    const tagWidth = ctx.measureText(tagText).width;
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '500 15px system-ui, sans-serif';
-    ctx.fillText(text.slice(0, 110) + (text.length > 110 ? '…' : ''), 28 + tagWidth, bannerH / 2);
-  } else {
-    // 🪪 Modern Card (Default): Frosted pill card with badge
-    const maxTextWidth = width * (isVertical ? 0.88 : 0.82);
-    const fontSize = isVertical
-      ? Math.max(24, Math.round(width * 0.038))
-      : Math.max(22, Math.round(width * 0.023));
-    ctx.font = `500 ${fontSize}px system-ui, -apple-system, sans-serif`;
-
-    const lines = wrapText(ctx, text, maxTextWidth);
-    const lineHeight = fontSize * 1.35;
-    const badgeHeight = 22;
-    const padY = 16;
-    const padX = 26;
-    const boxHeight = lines.length * lineHeight + padY * 2 + badgeHeight;
-    const boxWidth = Math.min(width * 0.94, maxTextWidth + padX * 2);
-    const boxX = (width - boxWidth) / 2;
-    const boxY = height - boxHeight - (isVertical ? 70 : 34);
-
-    // Card background
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-    drawRoundedRect(ctx, boxX, boxY, boxWidth, boxHeight, 14);
-    ctx.fill();
-
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    // Slide pill badge
-    ctx.fillStyle = '#0d9488';
-    drawRoundedRect(ctx, boxX + padX, boxY + padY, 88, 20, 10);
-    ctx.fill();
-
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '700 11px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`SLIDE ${slideNumber}`, boxX + padX + 44, boxY + padY + 10);
-
-    // Subtitle text lines
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `500 ${fontSize}px system-ui, -apple-system, sans-serif`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-    let lineY = boxY + padY + badgeHeight + fontSize;
-    for (const line of lines) {
-      ctx.fillText(line, boxX + padX, lineY);
-      lineY += lineHeight;
-    }
-  }
-
-  ctx.restore();
-}
-
 // Renders the full video and returns a Blob (with optional BGM and auto-ducking).
 // Uses offline WebCodecs encoding when available, else records in real time.
 export async function renderVideo(options) {
@@ -937,7 +842,7 @@ export async function renderVideo(options) {
 async function renderVideoFast({
   audioFile, rows, slides, imageUrls, duration, title = '',
   width = 1280, height = 720, fps = 30,
-  animationMode = 'random', slideAnimations = {}, captionStyle = 'modern-card',
+  animationMode = 'random', slideAnimations = {}, captionStyle = 'hormozi-pop',
   hookStyle = 'punch-stamp', textOverlays = {}, customTextOverlays = [],
   bgmFile = null, bgmVolume = 0.15, autoDuck = true,
   words = [], colorGrade = 'none', slideFilters = {}, brand = null, logoImg = null, sfx = null,
@@ -983,7 +888,7 @@ async function renderVideoRealtime({
   fps = 30,
   animationMode = 'random',
   slideAnimations = {},
-  captionStyle = 'modern-card',
+  captionStyle = 'hormozi-pop',
   hookStyle = 'punch-stamp',
   textOverlays = {},
   customTextOverlays = [],
