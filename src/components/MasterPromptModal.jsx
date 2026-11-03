@@ -144,26 +144,67 @@ export default function MasterPromptModal({
   // Copy Mother Master Prompt template with script injected
   function handleCopyMotherPrompt() {
     const motherPrompt = `# SYSTEM & ROLE INSTRUCTION
-You are an expert Storyboard Director and Video Prompt Engineer.
-Break down this script into granular visual image prompts, video maker slides, and a CSV table.
+You are an expert Storyboard Director, Prompt Engineer, and Video Production Specialist for the AI Video Maker Studio.
+Your task is to take a narration script and break it down into separate Section Entities (Intro, Section 1, Section 2, etc.). For EACH section, you will generate:
+1. Video Maker Script Text (restarting at Slide 1 for every section)
+2. Granular Image Generation Prompts (16:9 full-screen widescreen, bottom-caption safe zone, strict Character Consistency Lock)
+3. A Video Maker Production CSV Table
 
-### STRICT RULES:
-1. GRANULAR ACTION BREAKDOWN: Break down every comma (,) or action verb into an independent visual prompt.
-2. CHARACTER CONSISTENCY LOCK:
-Same male empath character in every scene:
-oversized round white/off-white face, messy spiky brown hair with rough irregular strokes, tiny black dot eyes, subtle eyebrows, tiny minimal mouth, thin black stick arms and legs, small simplified body, exaggerated head-to-body ratio, primitive storybook cartoon appearance.
-Brown shirt and dark pants. Thick rough black outlines. Imperfect hand-drawn sketch strokes. Flat simple colors. Minimal details. White background. Subtle light gray ground shadow.
-No realistic humans. No 3D. No photorealism. No anime. No detailed backgrounds.
+---
+### STRICT RULES & PROJECT COMPATIBILITY INSTRUCTIONS:
 
-### OUTPUT 1: SCRIPT SLIDES
-Slide 1: ...
-Slide 2: ...
+1. **SEPARATE SECTION ENTITIES (RESTART AT SLIDE 1 IN EVERY SECTION)**:
+   - Divide the script into its natural sections (starting with Intro, followed by Section 1, Section 2, etc.).
+   - Treat every section as a completely separate entity.
+   - Slide numbering MUST restart at \`Slide 1\` at the beginning of EVERY section (never continue numbering from the previous section).
 
-### OUTPUT 2: CSV TABLE
+2. **SECTION TITLE SLIDE & THUMBNAIL POSTER RULE**:
+   - Do NOT skip the Section Title in the script: include the spoken title of each section as \`Slide 1\` of that section (except for the Intro hook, which starts directly with the first hook clause).
+   - **CRITICAL EXCLUSION**: NEVER write the meta-words "Intro", "Section 1", "Section 2", or "Conclusion" inside the \`Slide X:\` spoken script text or inside the image generation prompts. Use ONLY the actual creative title words.
+   - For \`Slide 1\` of every section (excluding the Intro), make the Image Prompt look like a **16:9 YouTube Thumbnail / Chapter Poster** featuring the main character alongside bold, clean hand-lettered title typography displaying ONLY that section's title text.
+
+3. **GRANULAR ACTION BREAKDOWN (BIT-BY-BIT)**:
+   - Break down the narration clause-by-clause, action-by-action, or at every natural pause/comma (,).
+   - Every single slide prompt must directly depict the physical action, verb, body language, or emotion described in that exact clause (e.g., if the script says "she walked away", show her walking away into the distance while the protagonist stands looking).
+
+4. **CHARACTER CONSISTENCY LOCK (REPEAT VERBATIM IN EVERY IMAGE PROMPT)**:
+   Every generated image prompt MUST include this exact character and style description verbatim so each prompt works standalone:
+   - **Character**: Male empath character with an oversized round white/off-white face, messy spiky brown hair with rough irregular strokes, tiny black dot eyes, subtle eyebrows, tiny minimal mouth, thin black stick arms and legs, small simplified body, exaggerated head-to-body ratio, primitive storybook cartoon appearance.
+   - **Outfit**: Brown shirt, dark pants.
+   - **Art Style**: Thick rough black outlines, imperfect hand-drawn sketch strokes, flat simple 2D colors, minimal details, clean solid pure white background, subtle light gray ground shadow under feet.
+   - **Frame & Caption Safe-Zone Lock**: 16:9 widescreen full-frame composition, main character and action positioned in the center/upper 80% of the canvas, leaving the bottom 15% clean white space for animated video captions.
+   - **Consistency Rule**: Keep face shape, hairstyle, proportions, clothing, and line thickness 100% IDENTICAL across all slides. Only change pose, facial expression, gestures, and essential minimalist props.
+   - **Negative Constraints**: NO realistic humans, NO 3D rendering, NO photorealism, NO anime, NO complex backgrounds, NO shading gradients, NO extra clutter, NO meta-labels ("Section 1", "Intro", "Slide 1").
+
+---
+### OUTPUT FORMAT (REPEAT ALL 3 BLOCKS FOR EACH SECTION SEPARATELY):
+
+For EACH section (Intro, Section 1, Section 2, etc.), output these 3 copy-pasteable blocks:
+
+#### [SECTION HEADER — e.g., INTRO / SECTION 1]
+
+**BLOCK 1: VIDEO MAKER SCRIPT TEXT (Paste into Section "Direct Text Box")**
+\`\`\`text
+Slide 1: [Exact spoken clause or section title — no meta-words like "Section 1" or "Intro"]
+Slide 2: [Next spoken clause]
+Slide 3: [Next spoken clause]
+\`\`\`
+
+**BLOCK 2: IMAGE GENERATION PROMPTS (1-to-1 Match with Slides)**
+\`\`\`text
+Slide 1 Prompt: [Full standalone prompt including Character Consistency Lock + specific scene action + 16:9 caption-safe framing]
+Slide 2 Prompt: [Full standalone prompt including Character Consistency Lock + specific scene action + 16:9 caption-safe framing]
+\`\`\`
+
+**BLOCK 3: VIDEO MAKER PRODUCTION CSV (Upload to Section "Upload Document / CSV")**
+\`\`\`csv
 "Slide","Timecode","Sentence","Concept","Text Overlay","Prompt"
+"Slide 01","00:00 - 00:03","[Exact spoken clause]","[Short visual summary]","[2-3 WORD PUNCHY HOOK]","[Full standalone image prompt]"
+\`\`\`
 
-### INPUT SCRIPT:
-${scriptInput || 'There is a type of man who never double-texts. He doesn\'t send the follow-up at midnight.'}
+---
+### SCRIPT TO PROCESS:
+${scriptInput || '[PASTE YOUR FULL NARRATION SCRIPT HERE]'}
 `;
     navigator.clipboard.writeText(motherPrompt);
     setCopiedNotice(true);
