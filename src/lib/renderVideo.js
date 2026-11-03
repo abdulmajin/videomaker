@@ -6,6 +6,7 @@ import { drawModernBottomCaptions, gradeFilter, drawBrand } from './frameExtras'
 import {
   DEFAULT_RETENTION_GRAPHICS,
   computeRetentionCameraTransform,
+  drawBentoDepthSlide,
   drawPatternInterruptSlideTransition,
   drawRetentionGraphicOverlays,
 } from './retentionGraphics';
@@ -466,20 +467,42 @@ export function drawVideoFrame({
 
   const totalDx = transform.dx + retCam.dxOffset;
   const totalDy = transform.dy + retCam.dyOffset;
+  const totalRot = retCam.rotationRad || 0;
   const combinedScale = transform.scale * retCam.scaleMultiplier;
 
-  // Ensure scale covers any entry/camera translation so no background edge ever appears
+  // Ensure scale covers any entry/camera translation & rotation so no background edge ever appears
+  const rotMargin = Math.abs(totalRot) * 1.85;
   const minCoverScale = Math.max(
     1.0,
-    combinedScale,
-    1 + (Math.abs(totalDx) * 2) / Math.max(1, width),
-    1 + (Math.abs(totalDy) * 2) / Math.max(1, height)
+    combinedScale + rotMargin,
+    1 + (Math.abs(totalDx) * 2) / Math.max(1, width) + rotMargin,
+    1 + (Math.abs(totalDy) * 2) / Math.max(1, height) + rotMargin
   );
 
   const drawSingleSlideAt = (img, idx, dx = 0, dy = 0, sc = 1.0, alpha = 1.0) => {
+    if (retentionGraphics?.bentoDepth) {
+      drawBentoDepthSlide({
+        ctx,
+        img,
+        slideIndex: idx,
+        slides,
+        time,
+        width,
+        height,
+        dx,
+        dy,
+        rotationRad: totalRot,
+        scale: sc,
+        alpha,
+        filterStr: gradeFilter(colorGrade, slideFilters?.[idx]),
+      });
+      return;
+    }
+
     const sl = slides[idx];
     ctx.save();
     ctx.translate(centerX + dx, centerY + dy);
+    if (totalRot !== 0) ctx.rotate(totalRot);
     ctx.scale(sc, sc);
     ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
     ctx.filter = gradeFilter(colorGrade, slideFilters?.[idx]);

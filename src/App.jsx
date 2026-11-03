@@ -1380,17 +1380,34 @@ export default function App() {
                 </span>
               </div>
               <span className="caption-style-showcase-sub">
-                Select any single option, combine multiple choices, or enable all 6 together for maximum viewer retention.
+                Select any single option, combine multiple choices, enable the Modern Motion Pack (7–12), or enable all 12 together.
               </span>
             </div>
 
             <div className="retention-quick-actions">
               <button
                 type="button"
+                className="retention-quick-btn off-btn"
+                onClick={() =>
+                  setRetentionGraphics((prev) => ({
+                    ...prev,
+                    cinemaHandheld: true,
+                    spotlightFocus: true,
+                    doodleStrokes: true,
+                    actionBurst: true,
+                    bentoDepth: true,
+                    kineticRibbon: true,
+                  }))
+                }
+              >
+                🎥 Enable Modern Motion (7–12)
+              </button>
+              <button
+                type="button"
                 className={`retention-quick-btn all-btn ${areAllRetentionGraphicsEnabled(retentionGraphics) ? 'active' : ''}`}
                 onClick={() => setRetentionGraphics({ ...ALL_RETENTION_GRAPHICS })}
               >
-                🔥 Enable All 6 Combined
+                🔥 Enable All {RETENTION_GRAPHIC_OPTIONS.length} Combined
               </button>
               <button
                 type="button"

@@ -57,6 +57,60 @@ export const RETENTION_GRAPHIC_OPTIONS = [
     badge: 'Visual Reset',
     desc: 'Inserts whip-pan, zoom-snap flash, and slide-wipe transitions between slides with synced whoosh & pop SFX.',
   },
+  {
+    id: 'cinemaHandheld',
+    num: 7,
+    icon: '🎥',
+    label: '7. 3D Handheld Cinema Rig & Perspective Tilt',
+    shortLabel: '7. 3D Handheld Tilt',
+    badge: 'Modern Motion',
+    desc: 'Adds organic figure-8 handheld camera float, smooth micro-rotation tilt (±1.3°), and live lens depth breathing.',
+  },
+  {
+    id: 'spotlightFocus',
+    num: 8,
+    icon: '🔦',
+    label: '8. Dynamic Spotlight Focus & Studio Vignette',
+    shortLabel: '8. Spotlight Focus',
+    badge: 'Vox Documentary',
+    desc: 'Moving studio spotlight that tracks across the slide and tightens onto the subject on key words with a soft vignette.',
+  },
+  {
+    id: 'doodleStrokes',
+    num: 9,
+    icon: '✍️',
+    label: '9. Auto Hand-Drawn Circle, Arrow & Sketch Callouts',
+    shortLabel: '9. Sketch Circle & Arrow',
+    badge: 'Animated Ink',
+    desc: 'Automatically draws animated red/gold circles, curved pointer arrows, and highlighter strokes around key action.',
+  },
+  {
+    id: 'actionBurst',
+    num: 10,
+    icon: '💥',
+    label: '10. Kinetic Speed-Lines, Impact Shake & Focus HUD',
+    shortLabel: '10. Speed-Lines & Shake',
+    badge: 'High Energy',
+    desc: 'Triggers radial comic speed-lines, a crisp camera impact micro-shake, and lock-on HUD brackets on emphasis words.',
+  },
+  {
+    id: 'bentoDepth',
+    num: 11,
+    icon: '🖼️',
+    label: '11. Floating 3D Bento Card & Blurred Motion Backdrop',
+    shortLabel: '11. 3D Bento Frame',
+    badge: 'Ali Abdaal Look',
+    desc: 'Transforms slides into a floating 3D rounded glass card over a live blurred motion backdrop with deep shadow.',
+  },
+  {
+    id: 'kineticRibbon',
+    num: 12,
+    icon: '🎞️',
+    label: '12. Kinetic Split-Mask Key-Phrase Ribbon',
+    shortLabel: '12. Kinetic Text Ribbon',
+    badge: 'Modern Type',
+    desc: 'Slides in a sleek modern kinetic typography ribbon with an animated neon accent bar for each slide’s core phrase.',
+  },
 ];
 
 export const DEFAULT_RETENTION_GRAPHICS = {
@@ -66,6 +120,12 @@ export const DEFAULT_RETENTION_GRAPHICS = {
   livingFrame: false,
   progressPill: false,
   patternInterrupts: false,
+  cinemaHandheld: false,
+  spotlightFocus: false,
+  doodleStrokes: false,
+  actionBurst: false,
+  bentoDepth: false,
+  kineticRibbon: false,
 };
 
 export const ALL_RETENTION_GRAPHICS = {
@@ -75,6 +135,12 @@ export const ALL_RETENTION_GRAPHICS = {
   livingFrame: true,
   progressPill: true,
   patternInterrupts: true,
+  cinemaHandheld: true,
+  spotlightFocus: true,
+  doodleStrokes: true,
+  actionBurst: true,
+  bentoDepth: true,
+  kineticRibbon: true,
 };
 
 export function normalizeRetentionGraphics(rg) {
@@ -86,6 +152,12 @@ export function normalizeRetentionGraphics(rg) {
     livingFrame: Boolean(rg.livingFrame),
     progressPill: Boolean(rg.progressPill),
     patternInterrupts: Boolean(rg.patternInterrupts),
+    cinemaHandheld: Boolean(rg.cinemaHandheld),
+    spotlightFocus: Boolean(rg.spotlightFocus),
+    doodleStrokes: Boolean(rg.doodleStrokes),
+    actionBurst: Boolean(rg.actionBurst),
+    bentoDepth: Boolean(rg.bentoDepth),
+    kineticRibbon: Boolean(rg.kineticRibbon),
   };
 }
 
@@ -297,8 +369,8 @@ const PARTICLES = Array.from({ length: 28 }, (_, i) => ({
 }));
 
 /**
- * 1. Computes Continuous Camera Motion + Automatic Punch-Zoom on emphasis words.
- * Returns { scaleMultiplier, dxOffset, dyOffset, activePunchProgress }
+ * Computes camera motion for Options 1 (`punchZoom`), 7 (`cinemaHandheld`), and 10 (`actionBurst`).
+ * Returns { scaleMultiplier, dxOffset, dyOffset, rotationRad, activePunchProgress }
  */
 export function computeRetentionCameraTransform({
   retentionGraphics,
@@ -311,37 +383,190 @@ export function computeRetentionCameraTransform({
   words = [],
   slideText = '',
 }) {
-  if (!retentionGraphics?.punchZoom) {
-    return { scaleMultiplier: 1.0, dxOffset: 0, dyOffset: 0, activePunchProgress: 0 };
+  if (
+    !retentionGraphics?.punchZoom &&
+    !retentionGraphics?.cinemaHandheld &&
+    !retentionGraphics?.actionBurst
+  ) {
+    return {
+      scaleMultiplier: 1.0,
+      dxOffset: 0,
+      dyOffset: 0,
+      rotationRad: 0,
+      activePunchProgress: 0,
+    };
   }
 
   const dur = Math.max(0.5, slideEnd - slideStart);
   const elapsed = Math.max(0, time - slideStart);
   const p = Math.min(1, elapsed / dur);
-
-  // Continuous smooth Ken Burns glide (alternates direction per slide)
   const dir = slideIndex % 2 === 0 ? 1 : -1;
-  let scaleMultiplier = 1.035 + 0.035 * Math.sin(p * Math.PI);
-  const dxOffset = dir * Math.sin(elapsed * 0.65) * (width * 0.014);
-  const dyOffset = Math.cos(elapsed * 0.55) * (height * 0.01);
 
-  // Check if an emphasis word is currently being spoken for Punch-Zoom
+  let scaleMultiplier = 1.0;
+  let dxOffset = 0;
+  let dyOffset = 0;
+  let rotationRad = 0;
+
+  // Option 1: Continuous Ken Burns glide
+  if (retentionGraphics.punchZoom) {
+    scaleMultiplier = Math.max(scaleMultiplier, 1.035 + 0.035 * Math.sin(p * Math.PI));
+    dxOffset += dir * Math.sin(elapsed * 0.65) * (width * 0.014);
+    dyOffset += Math.cos(elapsed * 0.55) * (height * 0.01);
+  }
+
+  // Option 7: 3D Handheld Cinema Rig (organic figure-8 sway + smooth rotation roll)
+  if (retentionGraphics.cinemaHandheld) {
+    scaleMultiplier = Math.max(
+      scaleMultiplier,
+      1.055 + 0.022 * Math.sin(time * 1.4 + slideIndex)
+    );
+    dxOffset += Math.sin(time * 1.7 + slideIndex * 1.3) * (width * 0.016);
+    dyOffset += Math.sin(time * 3.4 + slideIndex * 0.7) * (height * 0.011);
+    rotationRad += dir * Math.sin(time * 1.35 + slideIndex * 0.9) * 0.022; // ~±1.25 deg
+  }
+
+  // Check if an emphasis word is currently being spoken for Punch-Zoom & Action Burst Shake
   const timedWords = getSlideTimedWords({ words, slideText, slideStart, slideEnd, slideIndex });
   let activePunchProgress = 0;
 
   for (const w of timedWords) {
     if (!w.emphasis) continue;
-    const wDur = Math.max(0.28, Math.min(0.65, (w.end - w.start) + 0.18));
+    const wDur = Math.max(0.28, Math.min(0.65, w.end - w.start + 0.18));
     const wEl = time - w.start;
     if (wEl >= 0 && wEl <= wDur) {
       const wp = wEl / wDur;
       const bump = Math.sin(wp * Math.PI);
-      scaleMultiplier += 0.085 * bump;
+      if (retentionGraphics.punchZoom) {
+        scaleMultiplier += 0.085 * bump;
+      }
       activePunchProgress = Math.max(activePunchProgress, wp);
+
+      // Option 10: Crisp camera impact micro-shake during the first 0.22s of emphasis
+      if (retentionGraphics.actionBurst && wEl <= 0.22) {
+        const decay = 1 - wEl / 0.22;
+        dxOffset += Math.sin(time * 95) * width * 0.009 * decay;
+        dyOffset += Math.cos(time * 110) * height * 0.009 * decay;
+        scaleMultiplier = Math.max(scaleMultiplier, 1.045);
+      }
     }
   }
 
-  return { scaleMultiplier, dxOffset, dyOffset, activePunchProgress };
+  return { scaleMultiplier, dxOffset, dyOffset, rotationRad, activePunchProgress };
+}
+
+/**
+ * Option 11: Floating 3D Bento Card & Blurred Motion Backdrop (`bentoDepth`).
+ * Renders the slide image over a live blurred/darkened motion backdrop inside a
+ * floating 3D rounded glass card with glowing border and deep drop shadow.
+ */
+export function drawBentoDepthSlide({
+  ctx,
+  img,
+  slideIndex = 0,
+  slides = [],
+  time = 0,
+  width,
+  height,
+  dx = 0,
+  dy = 0,
+  rotationRad = 0,
+  scale = 1.0,
+  alpha = 1.0,
+  filterStr = 'none',
+}) {
+  const sl = slides[slideIndex];
+  const scaleUnit = Math.min(width, height) / 720;
+
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+
+  // 1. Animated blurred & darkened motion backdrop filling 100% of screen resolution
+  ctx.save();
+  const bgScale = 1.18 + 0.04 * Math.sin(time * 0.9);
+  const bgDx = Math.cos(time * 0.7) * width * 0.025;
+  const bgDy = Math.sin(time * 0.6) * height * 0.02;
+  ctx.translate(width / 2 + bgDx, height / 2 + bgDy);
+  ctx.scale(bgScale, bgScale);
+  if (img && img.naturalWidth && img.naturalHeight) {
+    ctx.filter = `${filterStr !== 'none' ? filterStr + ' ' : ''}blur(${Math.round(18 * scaleUnit)}px) brightness(0.42) saturate(1.35)`;
+    ctx.drawImage(img, -width / 2, -height / 2, width, height);
+  } else {
+    ctx.fillStyle = '#090f1d';
+    ctx.fillRect(-width / 2, -height / 2, width, height);
+  }
+  ctx.restore();
+
+  // Subtle ambient radial glow behind the floating 3D Bento card
+  ctx.save();
+  const glowGrad = ctx.createRadialGradient(
+    width / 2,
+    height / 2,
+    width * 0.08,
+    width / 2,
+    height / 2,
+    width * 0.58
+  );
+  glowGrad.addColorStop(0, 'rgba(56, 189, 248, 0.22)');
+  glowGrad.addColorStop(0.6, 'rgba(20, 184, 166, 0.08)');
+  glowGrad.addColorStop(1, 'rgba(2, 6, 23, 0.55)');
+  ctx.fillStyle = glowGrad;
+  ctx.fillRect(0, 0, width, height);
+  ctx.restore();
+
+  // 2. Floating 3D Bento Card container (smooth hover float + micro-tilt)
+  const floatY = Math.sin(time * 2.1 + slideIndex) * (8 * scaleUnit);
+  const floatRot = rotationRad + Math.sin(time * 1.3 + slideIndex) * 0.01;
+  const cardW = Math.round(width * 0.88);
+  const cardH = Math.round(height * 0.86);
+  const radius = Math.round(24 * scaleUnit);
+
+  ctx.save();
+  ctx.translate(width / 2 + dx * 0.45, height / 2 + dy * 0.45 + floatY);
+  ctx.rotate(floatRot);
+
+  // Deep 3D elevation shadow
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.72)';
+  ctx.shadowBlur = 42 * scaleUnit;
+  ctx.shadowOffsetY = 18 * scaleUnit;
+  ctx.fillStyle = '#0f172a';
+  roundRect(ctx, -cardW / 2, -cardH / 2, cardW, cardH, radius);
+  ctx.fill();
+  ctx.restore();
+
+  // Clip inside rounded Bento card and draw the animated slide
+  ctx.save();
+  roundRect(ctx, -cardW / 2, -cardH / 2, cardW, cardH, radius);
+  ctx.clip();
+
+  const innerScale = Math.max(1.0, (scale - 1) * 0.65 + 1.02);
+  ctx.scale(innerScale, innerScale);
+  ctx.filter = filterStr;
+  if (img && img.naturalWidth && img.naturalHeight) {
+    ctx.drawImage(img, -cardW / 2, -cardH / 2, cardW, cardH);
+  } else {
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(-cardW / 2, -cardH / 2, cardW, cardH);
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '600 32px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`Slide ${sl ? sl.id : slideIndex + 1}`, 0, 0);
+  }
+  ctx.restore();
+
+  // Glowing glass rim border around the 3D Bento Card
+  const rimGrad = ctx.createLinearGradient(-cardW / 2, -cardH / 2, cardW / 2, cardH / 2);
+  rimGrad.addColorStop(0, 'rgba(56, 189, 248, 0.85)');
+  rimGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.35)');
+  rimGrad.addColorStop(1, 'rgba(45, 212, 191, 0.85)');
+  ctx.strokeStyle = rimGrad;
+  ctx.lineWidth = Math.max(2, 3 * scaleUnit);
+  roundRect(ctx, -cardW / 2, -cardH / 2, cardW, cardH, radius);
+  ctx.stroke();
+
+  ctx.restore();
+  ctx.restore();
 }
 
 /**
@@ -738,5 +963,270 @@ export function drawRetentionGraphicOverlays(
     ctx.textBaseline = 'middle';
     ctx.fillText(topicLabel, px + Math.round(13 * scaleUnit), py + ph / 2);
     ctx.restore();
+  }
+
+  // ── Option 8: Dynamic Spotlight Focus & Studio Vignette (`spotlightFocus`) ─
+  if (retentionGraphics.spotlightFocus) {
+    ctx.save();
+    // Spotlight smoothly glides across the focal area and tightens on emphasis words
+    const tighten = activePunchProgress > 0 ? Math.sin(activePunchProgress * Math.PI) * 0.16 : 0;
+    const spotX = width * (0.5 + 0.11 * Math.sin(time * 0.95 + activeIndex * 1.2));
+    const spotY = height * (0.44 + 0.07 * Math.cos(time * 0.8 + activeIndex * 0.9));
+    const innerR = Math.max(width, height) * Math.max(0.14, 0.24 - tighten);
+    const outerR = Math.max(width, height) * (0.72 - tighten * 0.3);
+
+    const spotGrad = ctx.createRadialGradient(spotX, spotY, innerR, spotX, spotY, outerR);
+    spotGrad.addColorStop(0, 'rgba(255, 250, 220, 0.08)');
+    spotGrad.addColorStop(0.45, 'rgba(15, 23, 42, 0.0)');
+    spotGrad.addColorStop(1, 'rgba(2, 6, 23, 0.56)');
+    ctx.fillStyle = spotGrad;
+    ctx.fillRect(0, 0, width, height);
+
+    // Subtle glowing focus ring around spotlight center when emphasis hits
+    if (activePunchProgress > 0) {
+      const ringAlpha = Math.sin(activePunchProgress * Math.PI) * 0.45;
+      ctx.strokeStyle = `rgba(56, 189, 248, ${ringAlpha.toFixed(3)})`;
+      ctx.lineWidth = Math.max(1.5, 2.5 * scaleUnit);
+      ctx.setLineDash([10 * scaleUnit, 8 * scaleUnit]);
+      ctx.beginPath();
+      ctx.arc(spotX, spotY, innerR * 0.95, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ── Option 9: Auto Hand-Drawn Circle, Arrow & Highlighter Strokes (`doodleStrokes`) ─
+  if (retentionGraphics.doodleStrokes) {
+    const slideEl = Math.max(0, time - slideStart);
+    const slideDur = Math.max(0.8, slideEnd - slideStart);
+
+    // 9a. Animated hand-drawn double-loop circle around center focal area
+    const circleStart = Math.min(0.35, slideDur * 0.12);
+    const circleEnd = Math.min(slideDur - 0.15, circleStart + 2.4);
+    if (slideEl >= circleStart && slideEl <= circleEnd) {
+      const cp = Math.min(1, (slideEl - circleStart) / 0.55);
+      const fade = slideEl > circleEnd - 0.35 ? Math.max(0, (circleEnd - slideEl) / 0.35) : 1;
+      const cx = width * (0.5 + (activeIndex % 2 === 0 ? -0.04 : 0.04));
+      const cy = height * 0.43;
+      const rx = width * 0.17;
+      const ry = height * 0.21;
+
+      ctx.save();
+      ctx.globalAlpha = fade * 0.92;
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = Math.max(3, 5 * scaleUnit);
+      ctx.lineCap = 'round';
+      ctx.shadowColor = 'rgba(239, 68, 68, 0.35)';
+      ctx.shadowBlur = 8 * scaleUnit;
+
+      // Hand-drawn sketchy double loop
+      const maxAngle = Math.PI * 2.25 * easeOutCubic(cp);
+      ctx.beginPath();
+      const steps = 48;
+      for (let s = 0; s <= steps; s++) {
+        const a = -Math.PI * 0.65 + (maxAngle * s) / steps;
+        const wobble = 1 + 0.035 * Math.sin(a * 3 + activeIndex);
+        const px = cx + Math.cos(a) * rx * wobble;
+        const py = cy + Math.sin(a) * ry * wobble;
+        if (s === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // 9b. Animated curved sketch pointer arrow (draws in mid-slide or on emphasis)
+    const arrowStart = Math.min(0.75, slideDur * 0.25);
+    const arrowEnd = Math.min(slideDur - 0.1, arrowStart + 2.3);
+    if (slideEl >= arrowStart && slideEl <= arrowEnd) {
+      const ap = easeOutCubic(Math.min(1, (slideEl - arrowStart) / 0.45));
+      const fade = slideEl > arrowEnd - 0.35 ? Math.max(0, (arrowEnd - slideEl) / 0.35) : 1;
+      const fromLeft = activeIndex % 2 === 0;
+      const startX = fromLeft ? width * 0.18 : width * 0.82;
+      const startY = height * 0.26;
+      const ctrlX = fromLeft ? width * 0.28 : width * 0.72;
+      const ctrlY = height * 0.16;
+      const endX = fromLeft ? width * 0.38 : width * 0.62;
+      const endY = height * 0.34;
+
+      ctx.save();
+      ctx.globalAlpha = fade * 0.95;
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = Math.max(3.5, 5.5 * scaleUnit);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+      ctx.shadowBlur = 8 * scaleUnit;
+
+      ctx.beginPath();
+      const segs = 28;
+      let tipX = startX;
+      let tipY = startY;
+      let prevX = startX;
+      let prevY = startY;
+      for (let i = 0; i <= segs; i++) {
+        const t = (i / segs) * ap;
+        const inv = 1 - t;
+        const x = inv * inv * startX + 2 * inv * t * ctrlX + t * t * endX;
+        const y = inv * inv * startY + 2 * inv * t * ctrlY + t * t * endY;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+        if (i === segs - 2) {
+          prevX = x;
+          prevY = y;
+        }
+        tipX = x;
+        tipY = y;
+      }
+      ctx.stroke();
+
+      // Arrowhead wings once curve reaches >65%
+      if (ap > 0.65) {
+        const headP = Math.min(1, (ap - 0.65) / 0.35);
+        const angle = Math.atan2(tipY - prevY, tipX - prevX);
+        const headLen = 18 * scaleUnit * headP;
+        ctx.beginPath();
+        ctx.moveTo(
+          tipX - headLen * Math.cos(angle - 0.55),
+          tipY - headLen * Math.sin(angle - 0.55)
+        );
+        ctx.lineTo(tipX, tipY);
+        ctx.lineTo(
+          tipX - headLen * Math.cos(angle + 0.55),
+          tipY - headLen * Math.sin(angle + 0.55)
+        );
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  // ── Option 10: Kinetic Speed-Lines, Impact Shake & Focus HUD (`actionBurst`) ─
+  if (retentionGraphics.actionBurst) {
+    const slideEl = Math.max(0, time - slideStart);
+    const introBurst = slideEl < 0.48 ? 1 - slideEl / 0.48 : 0;
+    const empBurst = activePunchProgress > 0 ? Math.sin(activePunchProgress * Math.PI) : 0;
+    const burstIntensity = Math.max(introBurst, empBurst);
+
+    if (burstIntensity > 0.04) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(0.85, burstIntensity * 0.78);
+      const cx = width / 2;
+      const cy = height * 0.46;
+      const maxDiag = Math.hypot(width, height) * 0.62;
+      const innerClear = Math.min(width, height) * 0.36;
+
+      // Radial high-energy speed-lines around perimeter
+      const lineCount = 36;
+      for (let i = 0; i < lineCount; i++) {
+        const angle = (i / lineCount) * Math.PI * 2 + Math.floor(time * 18) * 0.09;
+        const seed = Math.sin(i * 19.7 + Math.floor(time * 16));
+        const rStart = innerClear * (0.92 + 0.18 * Math.abs(seed));
+        const rEnd = maxDiag;
+
+        ctx.strokeStyle = i % 3 === 0 ? '#fde047' : 'rgba(255, 255, 255, 0.85)';
+        ctx.lineWidth = (i % 4 === 0 ? 3.2 : 1.8) * scaleUnit;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(angle) * rStart, cy + Math.sin(angle) * rStart);
+        ctx.lineTo(cx + Math.cos(angle) * rEnd, cy + Math.sin(angle) * rEnd);
+        ctx.stroke();
+      }
+
+      // Lock-on HUD Corner Focus Brackets
+      const insetX = width * (0.14 + (1 - burstIntensity) * 0.03);
+      const insetY = height * (0.14 + (1 - burstIntensity) * 0.03);
+      const boxW = width - insetX * 2;
+      const boxH = height * 0.68 - insetY;
+      const arm = Math.round(26 * scaleUnit);
+
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = Math.max(2.5, 3.5 * scaleUnit);
+      ctx.shadowColor = '#38bdf8';
+      ctx.shadowBlur = 10 * scaleUnit;
+
+      ctx.beginPath();
+      // Top-left bracket
+      ctx.moveTo(insetX, insetY + arm);
+      ctx.lineTo(insetX, insetY);
+      ctx.lineTo(insetX + arm, insetY);
+      // Top-right bracket
+      ctx.moveTo(insetX + boxW - arm, insetY);
+      ctx.lineTo(insetX + boxW, insetY);
+      ctx.lineTo(insetX + boxW, insetY + arm);
+      // Bottom-left bracket
+      ctx.moveTo(insetX, insetY + boxH - arm);
+      ctx.lineTo(insetX, insetY + boxH);
+      ctx.lineTo(insetX + arm, insetY + boxH);
+      // Bottom-right bracket
+      ctx.moveTo(insetX + boxW - arm, insetY + boxH);
+      ctx.lineTo(insetX + boxW, insetY + boxH);
+      ctx.lineTo(insetX + boxW, insetY + boxH - arm);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // ── Option 12: Kinetic Split-Mask Key-Phrase Ribbon (`kineticRibbon`) ──────
+  if (retentionGraphics.kineticRibbon && timedWords.length > 0) {
+    const slideEl = Math.max(0, time - slideStart);
+    const slideDur = Math.max(0.8, slideEnd - slideStart);
+    const ribStart = Math.min(0.25, slideDur * 0.08);
+    const ribEnd = Math.min(slideDur - 0.15, ribStart + 2.5);
+
+    if (slideEl >= ribStart && slideEl <= ribEnd) {
+      const enterP = easeOutCubic(Math.min(1, (slideEl - ribStart) / 0.38));
+      const exitP = slideEl > ribEnd - 0.35 ? Math.max(0, (ribEnd - slideEl) / 0.35) : 1;
+      const visP = Math.min(enterP, exitP);
+
+      // Extract punchiest 2-3 word key phrase from the slide
+      const focusIdx = Math.max(
+        0,
+        timedWords.findIndex((w) => w.emphasis)
+      );
+      const phraseTokens = timedWords
+        .slice(focusIdx, focusIdx + 3)
+        .map((w) => cleanToken(w.text))
+        .filter(Boolean);
+      const ribbonText = (phraseTokens.join(' ') || `SLIDE ${activeIndex + 1}`).toUpperCase();
+
+      const fontSz = Math.round(20 * scaleUnit);
+      ctx.save();
+      ctx.font = `900 ${fontSz}px system-ui, -apple-system, sans-serif`;
+      const textW = ctx.measureText(ribbonText).width;
+      const rW = Math.round(textW + 42 * scaleUnit);
+      const rH = Math.round(40 * scaleUnit);
+      const rX = width - rW - Math.round(22 * scaleUnit);
+      const rY = Math.round((retentionGraphics.livingFrame ? 64 : 22) * scaleUnit);
+
+      // Clip mask for smooth kinetic slide-in reveal
+      ctx.beginPath();
+      ctx.rect(rX, rY, rW * visP, rH);
+      ctx.clip();
+
+      ctx.shadowColor = 'rgba(2, 6, 23, 0.55)';
+      ctx.shadowBlur = 16 * scaleUnit;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+      roundRect(ctx, rX, rY, rW, rH, 10 * scaleUnit);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Left neon accent bar
+      const barGrad = ctx.createLinearGradient(rX, rY, rX, rY + rH);
+      barGrad.addColorStop(0, '#f59e0b');
+      barGrad.addColorStop(1, '#ec4899');
+      ctx.fillStyle = barGrad;
+      ctx.fillRect(rX, rY, Math.round(7 * scaleUnit), rH);
+
+      // Kinetic phrase text
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(
+        ribbonText,
+        rX + Math.round(18 * scaleUnit) - (1 - enterP) * 24 * scaleUnit,
+        rY + rH / 2
+      );
+      ctx.restore();
+    }
   }
 }
