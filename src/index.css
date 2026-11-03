@@ -4384,3 +4384,162 @@ tr.active-row {
   line-height: 1.35;
 }
 
+/* --- Auto-Retention Graphic Automation (Multi-Select & All-6 Combined) --- */
+.retention-graphics-showcase {
+  margin-top: 16px;
+  padding: 15px 16px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.62);
+  border: 1px solid rgba(56, 189, 248, 0.22);
+}
+
+.retention-graphics-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.retention-graphics-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.retention-count-pill {
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.14);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.retention-count-pill.has-active {
+  background: rgba(20, 184, 166, 0.2);
+  color: #2dd4bf;
+  border-color: rgba(45, 212, 191, 0.45);
+}
+
+.retention-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.retention-quick-btn {
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.retention-quick-btn.all-btn {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.retention-quick-btn.all-btn:hover,
+.retention-quick-btn.all-btn.active {
+  background: linear-gradient(135deg, #f59e0b, #ea580c);
+  color: #ffffff;
+  border-color: #fbbf24;
+  box-shadow: 0 4px 14px rgba(245, 158, 11, 0.35);
+}
+
+.retention-quick-btn.off-btn {
+  background: #0f172a;
+  color: #94a3b8;
+  border: 1px solid #334155;
+}
+
+.retention-quick-btn.off-btn:hover {
+  color: #f8fafc;
+  border-color: #64748b;
+}
+
+.retention-quick-btn.off-btn.active {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-color: #475569;
+}
+
+.retention-graphics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(245px, 1fr));
+  gap: 10px;
+}
+
+.retention-graphic-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  background: #0b1324;
+  border: 1.5px solid #1e293b;
+  color: #e2e8f0;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.retention-graphic-card:hover {
+  transform: translateY(-1px);
+  border-color: #38bdf8;
+  background: #0f1b33;
+}
+
+.retention-graphic-card.active {
+  border-color: #14b8a6;
+  background: linear-gradient(135deg, rgba(13, 148, 136, 0.24), rgba(15, 23, 42, 0.95));
+  box-shadow: 0 0 0 1px rgba(20, 184, 166, 0.35), 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
+.retention-card-top {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+}
+
+.retention-checkbox-indicator {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1.5px solid #475569;
+  background: #090e1a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.74rem;
+  font-weight: 900;
+  color: #ffffff;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.retention-graphic-card.active .retention-checkbox-indicator {
+  background: #14b8a6;
+  border-color: #2dd4bf;
+  box-shadow: 0 0 8px rgba(20, 184, 166, 0.5);
+}
+
+.retention-card-name {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #f8fafc;
+  flex: 1;
+}
+
+

@@ -35,6 +35,14 @@ import { getSnapshotInfo, loadSnapshot, deleteSnapshot } from './lib/autosave';
 import { useAutosave } from './lib/useAutosave';
 import { useUndoHistory } from './lib/useUndoHistory';
 import { COLOR_GRADES, DEFAULT_BRAND, buildChapters, loadImage, normalizeCaptionStyle } from './lib/frameExtras';
+import {
+  RETENTION_GRAPHIC_OPTIONS,
+  DEFAULT_RETENTION_GRAPHICS,
+  ALL_RETENTION_GRAPHICS,
+  normalizeRetentionGraphics,
+  countEnabledRetentionGraphics,
+  areAllRetentionGraphicsEnabled,
+} from './lib/retentionGraphics';
 import { SFX_MODES } from './lib/sfx';
 import { supportsFastExport } from './lib/fastExport';
 import { mergeSections, isReadySection, dataUrlToBlob, overlaysToStudioLayers } from './lib/mergeSections';
@@ -155,6 +163,7 @@ export default function App() {
   const [animationMode, setAnimationMode] = useState('random');
   const [captionStyle, setCaptionStyle] = useState('hormozi-pop');
   const [hookStyle, setHookStyle] = useState('punch-stamp'); // 'punch-stamp' | 'chapter-pill' | 'bottom-badge' | 'none'
+  const [retentionGraphics, setRetentionGraphics] = useState(() => ({ ...DEFAULT_RETENTION_GRAPHICS }));
 
   // Look, Brand Kit & Sound Effects
   const [colorGrade, setColorGrade] = useState('none');
@@ -210,7 +219,10 @@ export default function App() {
     loadImage(logoUrl).then((img) => { if (active) setLogoImg(img); });
     return () => { active = false; };
   }, [logoUrl]);
-  const look = useMemo(() => ({ colorGrade, brand, logoImg }), [colorGrade, brand, logoImg]);
+  const look = useMemo(
+    () => ({ colorGrade, brand, logoImg, retentionGraphics }),
+    [colorGrade, brand, logoImg, retentionGraphics]
+  );
   const updateBrand = (changes) => setBrand((b) => ({ ...b, ...changes }));
 
   // ── Autosave & crash recovery (IndexedDB) ──────────────────────────────────
@@ -230,7 +242,7 @@ export default function App() {
   // blob URLs that just point at a stored File are recreated on restore.
   const makerSnapshot = useMemo(() => ({
     projectTitle, model, aspectRatio, imageEngine, visualStyle,
-    animationMode, captionStyle, hookStyle, resolution, colorGrade, brand, sfx,
+    animationMode, captionStyle, hookStyle, retentionGraphics, resolution, colorGrade, brand, sfx,
     bgmFile, bgmUrl: bgmFile ? null : bgmUrl, bgmVolume, autoDuck,
     sections: sections.map(({ slides, effectiveImageUrls, ...s }) => ({
       ...s,
@@ -238,7 +250,7 @@ export default function App() {
     })),
     mergedData: mergedData ? { ...mergedData, audioFile: null } : null,
   }), [projectTitle, model, aspectRatio, imageEngine, visualStyle, animationMode, captionStyle,
-    hookStyle, resolution, colorGrade, brand, sfx, bgmFile, bgmUrl, bgmVolume, autoDuck, sections, mergedData]);
+    hookStyle, retentionGraphics, resolution, colorGrade, brand, sfx, bgmFile, bgmUrl, bgmVolume, autoDuck, sections, mergedData]);
 
   const makerAutosave = useAutosave({
     key: 'maker',
@@ -268,6 +280,7 @@ export default function App() {
         if (d.animationMode) setAnimationMode(d.animationMode);
         if (d.captionStyle) setCaptionStyle(normalizeCaptionStyle(d.captionStyle));
         if (d.hookStyle) setHookStyle(d.hookStyle);
+        if (d.retentionGraphics) setRetentionGraphics(normalizeRetentionGraphics(d.retentionGraphics));
         if (d.resolution) setResolution(d.resolution);
         if (d.colorGrade) setColorGrade(d.colorGrade);
         if (d.brand) setBrand({ ...DEFAULT_BRAND, logoFile: null, ...d.brand });
@@ -312,9 +325,9 @@ export default function App() {
 
   // ── Undo / redo for the Maker page ─────────────────────────────────────────
   const undoSnapshot = useMemo(() => ({
-    projectTitle, aspectRatio, animationMode, captionStyle, hookStyle, colorGrade, brand, sfx,
+    projectTitle, aspectRatio, animationMode, captionStyle, hookStyle, retentionGraphics, colorGrade, brand, sfx,
     bgmFile, bgmUrl, bgmVolume, autoDuck, sections, mergedData,
-  }), [projectTitle, aspectRatio, animationMode, captionStyle, hookStyle, colorGrade, brand, sfx,
+  }), [projectTitle, aspectRatio, animationMode, captionStyle, hookStyle, retentionGraphics, colorGrade, brand, sfx,
     bgmFile, bgmUrl, bgmVolume, autoDuck, sections, mergedData]);
 
   const applyUndoSnapshot = useCallback((snap) => {
@@ -323,6 +336,7 @@ export default function App() {
     setAnimationMode(snap.animationMode);
     setCaptionStyle(snap.captionStyle);
     setHookStyle(snap.hookStyle);
+    if (snap.retentionGraphics) setRetentionGraphics(normalizeRetentionGraphics(snap.retentionGraphics));
     setColorGrade(snap.colorGrade);
     setBrand(snap.brand);
     setSfx(snap.sfx);
@@ -462,9 +476,10 @@ export default function App() {
         slideFilters: mergedData.slideFilters || {},
         brand,
         logoImg,
+        retentionGraphics,
       });
     },
-    [mergedData, animationMode, captionStyle, hookStyle, colorGrade, brand, logoImg, mergedImagesReady] // eslint-disable-line react-hooks/exhaustive-deps
+    [mergedData, animationMode, captionStyle, hookStyle, retentionGraphics, colorGrade, brand, logoImg, mergedImagesReady] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   // Playback loop for master merged video
@@ -588,6 +603,7 @@ export default function App() {
           brand,
           logoImg,
           sfx,
+          retentionGraphics,
           onProgress: (pct, msg) => {
             setExportProgress(Math.round((fi * 100 + pct) / formats.length));
             setExportStatus(label + msg);
@@ -755,6 +771,7 @@ export default function App() {
         animationMode,
         captionStyle,
         hookStyle,
+        retentionGraphics,
         imageEngine,
         visualStyle,
         bgmVolume,
@@ -833,6 +850,7 @@ export default function App() {
       if (data.animationMode) setAnimationMode(data.animationMode);
       if (data.captionStyle) setCaptionStyle(normalizeCaptionStyle(data.captionStyle));
       if (data.hookStyle) setHookStyle(data.hookStyle);
+      if (data.retentionGraphics) setRetentionGraphics(normalizeRetentionGraphics(data.retentionGraphics));
       if (data.imageEngine) setImageEngine(data.imageEngine);
       if (data.visualStyle) setVisualStyle(data.visualStyle);
       if (data.bgmVolume != null) setBgmVolume(data.bgmVolume);
@@ -1343,6 +1361,72 @@ export default function App() {
                     )}
                   </div>
                   <div className="caption-style-card-desc">{c.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Auto-Retention Graphic Automation (Single, Multi-Choice & All-6 Combined) */}
+        <div className="retention-graphics-showcase">
+          <div className="retention-graphics-header">
+            <div>
+              <div className="retention-graphics-title-row">
+                <span className="caption-style-showcase-title">
+                  🎯 Auto-Retention Graphic Automation (Multi-Select)
+                </span>
+                <span className={`retention-count-pill ${countEnabledRetentionGraphics(retentionGraphics) > 0 ? 'has-active' : ''}`}>
+                  {countEnabledRetentionGraphics(retentionGraphics)} / {RETENTION_GRAPHIC_OPTIONS.length} Active
+                </span>
+              </div>
+              <span className="caption-style-showcase-sub">
+                Select any single option, combine multiple choices, or enable all 6 together for maximum viewer retention.
+              </span>
+            </div>
+
+            <div className="retention-quick-actions">
+              <button
+                type="button"
+                className={`retention-quick-btn all-btn ${areAllRetentionGraphicsEnabled(retentionGraphics) ? 'active' : ''}`}
+                onClick={() => setRetentionGraphics({ ...ALL_RETENTION_GRAPHICS })}
+              >
+                🔥 Enable All 6 Combined
+              </button>
+              <button
+                type="button"
+                className={`retention-quick-btn off-btn ${countEnabledRetentionGraphics(retentionGraphics) === 0 ? 'active' : ''}`}
+                onClick={() => setRetentionGraphics({ ...DEFAULT_RETENTION_GRAPHICS })}
+              >
+                🚫 Clear All (Off)
+              </button>
+            </div>
+          </div>
+
+          <div className="retention-graphics-grid">
+            {RETENTION_GRAPHIC_OPTIONS.map((opt) => {
+              const isSelected = Boolean(retentionGraphics[opt.id]);
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className={`retention-graphic-card ${isSelected ? 'active' : ''}`}
+                  onClick={() =>
+                    setRetentionGraphics((prev) => ({
+                      ...prev,
+                      [opt.id]: !prev[opt.id],
+                    }))
+                  }
+                >
+                  <div className="retention-card-top">
+                    <span className="retention-checkbox-indicator" aria-hidden="true">
+                      {isSelected ? '✓' : ''}
+                    </span>
+                    <span className="retention-card-name">
+                      {opt.icon} {opt.shortLabel}
+                    </span>
+                    <span className="caption-style-card-badge">{opt.badge}</span>
+                  </div>
+                  <div className="caption-style-card-desc">{opt.desc}</div>
                 </button>
               );
             })}

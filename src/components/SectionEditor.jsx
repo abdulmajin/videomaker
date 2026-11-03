@@ -133,6 +133,7 @@ export default function SectionEditor({
         slideFilters: section.slideFilters || {},
         brand: look.brand,
         logoImg: look.logoImg,
+        retentionGraphics: look.retentionGraphics,
       });
     },
     [

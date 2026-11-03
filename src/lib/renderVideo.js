@@ -3,6 +3,12 @@
 
 import { computeSlideTransform, getSlideAnimation } from './animations';
 import { drawModernBottomCaptions, gradeFilter, drawBrand } from './frameExtras';
+import {
+  DEFAULT_RETENTION_GRAPHICS,
+  computeRetentionCameraTransform,
+  drawPatternInterruptSlideTransition,
+  drawRetentionGraphicOverlays,
+} from './retentionGraphics';
 import { scheduleSfx } from './sfx';
 import { supportsFastExport, mixAudioOffline, encodeMp4 } from './fastExport';
 
@@ -395,6 +401,7 @@ export function drawVideoFrame({
   slideFilters = {},
   brand = null,
   logoImg = null,
+  retentionGraphics = DEFAULT_RETENTION_GRAPHICS,
 }) {
   const isVertical = height > width;
 
@@ -444,45 +451,87 @@ export function drawVideoFrame({
   const videoBlockBottom = height;
   const videoBlockWidth = width;
 
-  // Ensure scale covers any entry translation so no background edge ever appears
+  // Compute Auto-Retention Camera (Option 1: Continuous Ken Burns + Punch-Zoom on emphasis words)
+  const retCam = computeRetentionCameraTransform({
+    retentionGraphics,
+    time,
+    slideStart,
+    slideEnd,
+    slideIndex: activeIndex,
+    width,
+    height,
+    words,
+    slideText: activeSlide?.text || '',
+  });
+
+  const totalDx = transform.dx + retCam.dxOffset;
+  const totalDy = transform.dy + retCam.dyOffset;
+  const combinedScale = transform.scale * retCam.scaleMultiplier;
+
+  // Ensure scale covers any entry/camera translation so no background edge ever appears
   const minCoverScale = Math.max(
     1.0,
-    transform.scale,
-    1 + (Math.abs(transform.dx) * 2) / Math.max(1, width),
-    1 + (Math.abs(transform.dy) * 2) / Math.max(1, height)
+    combinedScale,
+    1 + (Math.abs(totalDx) * 2) / Math.max(1, width),
+    1 + (Math.abs(totalDy) * 2) / Math.max(1, height)
   );
 
-  // 4. Render Animated Slide Image (fits 100% of screen resolution)
-  if (activeImg && activeImg.naturalWidth && activeImg.naturalHeight) {
-    const dw = width;
-    const dh = height;
-
+  const drawSingleSlideAt = (img, idx, dx = 0, dy = 0, sc = 1.0, alpha = 1.0) => {
+    const sl = slides[idx];
     ctx.save();
-    // Apply animation translation, full-bleed scale, and opacity
-    ctx.translate(centerX + transform.dx, centerY + transform.dy);
-    ctx.scale(minCoverScale, minCoverScale);
-    ctx.globalAlpha = Math.max(0, Math.min(1, transform.opacity));
-    ctx.filter = gradeFilter(colorGrade, slideFilters?.[activeIndex]);
-
-    ctx.drawImage(activeImg, -dw / 2, -dh / 2, dw, dh);
+    ctx.translate(centerX + dx, centerY + dy);
+    ctx.scale(sc, sc);
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    ctx.filter = gradeFilter(colorGrade, slideFilters?.[idx]);
+    if (img && img.naturalWidth && img.naturalHeight) {
+      ctx.drawImage(img, -width / 2, -height / 2, width, height);
+    } else {
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(-width / 2, -height / 2, width, height);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '600 32px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`Slide ${sl ? sl.id : idx + 1}`, 0, 0);
+    }
     ctx.restore();
-  } else {
-    // Full-screen placeholder card
-    ctx.save();
-    ctx.translate(centerX + transform.dx, centerY + transform.dy);
-    ctx.scale(minCoverScale, minCoverScale);
-    ctx.globalAlpha = Math.max(0, Math.min(1, transform.opacity));
+  };
 
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(-width / 2, -height / 2, width, height);
+  // 4. Render Animated Slide Image (with optional Option 6 Pattern-Interrupt Transition)
+  const prevImg = activeIndex > 0 && preloadedImages ? preloadedImages[activeIndex - 1] : null;
+  const transitionHandled = drawPatternInterruptSlideTransition({
+    ctx,
+    retentionGraphics,
+    activeIndex,
+    time,
+    slideStart,
+    width,
+    height,
+    prevImg,
+    activeImg,
+    drawSingleSlideFn: (img, idx) => drawSingleSlideAt(img, idx, totalDx, totalDy, minCoverScale, 1.0),
+  });
 
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '600 32px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`Slide ${activeSlide ? activeSlide.id : activeIndex + 1}`, 0, 0);
-    ctx.restore();
+  if (!transitionHandled) {
+    drawSingleSlideAt(activeImg, activeIndex, totalDx, totalDy, minCoverScale, transform.opacity);
   }
+
+  // 4b. Auto-Retention Graphic Overlays (Options 1–5: Shockwave, Stat Cards, Icon Pops, Living Frame, Progress Pill)
+  drawRetentionGraphicOverlays(ctx, {
+    retentionGraphics,
+    width,
+    height,
+    time,
+    duration,
+    rows,
+    slides,
+    activeIndex,
+    slideStart,
+    slideEnd,
+    words,
+    isVertical,
+    activePunchProgress: retCam.activePunchProgress,
+  });
 
   // 5. Kinetic Text Overlay / Retention Hook
   const rawOverlay = textOverlays?.[activeIndex] || activeSlide?.textOverlay || '';
@@ -843,16 +892,22 @@ async function renderVideoFast({
   hookStyle = 'punch-stamp', textOverlays = {}, customTextOverlays = [],
   bgmFile = null, bgmVolume = 0.15, autoDuck = true,
   words = [], colorGrade = 'none', slideFilters = {}, brand = null, logoImg = null, sfx = null,
+  retentionGraphics = DEFAULT_RETENTION_GRAPHICS,
   onProgress = () => {}, abortSignal = null,
 }) {
   onProgress(2, 'Preloading slide images…');
   const preloadedImages = await preloadImages(imageUrls);
   if (abortSignal?.aborted) throw new Error('Render cancelled');
 
+  const effectiveSfx =
+    (!sfx || sfx.mode === 'none') && (retentionGraphics?.patternInterrupts || retentionGraphics?.iconPops)
+      ? { mode: 'both', volume: sfx?.volume ?? 0.6 }
+      : sfx;
+
   onProgress(5, 'Mixing voice, music & sound effects…');
   const audioBuffer = await mixAudioOffline({
     voice: audioFile, bgm: bgmFile, bgmVolume, autoDuck, rows, words, duration,
-    sfxOptions: { rows, slides, textOverlays, hookStyle, sfx },
+    sfxOptions: { rows, slides, textOverlays, hookStyle, sfx: effectiveSfx },
   });
   if (abortSignal?.aborted) throw new Error('Render cancelled');
 
@@ -867,6 +922,7 @@ async function renderVideoFast({
       ctx, width, height, time, duration, rows, slides, preloadedImages,
       animationMode, slideAnimations, captionStyle, hookStyle, textOverlays,
       customTextOverlays, title, words, colorGrade, slideFilters, brand, logoImg,
+      retentionGraphics,
     }),
   });
   const safeTitle = (title || 'video').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -898,6 +954,7 @@ async function renderVideoRealtime({
   brand = null,
   logoImg = null,
   sfx = null,
+  retentionGraphics = DEFAULT_RETENTION_GRAPHICS,
   onProgress = () => {},
   abortSignal = null,
 }) {
@@ -1009,8 +1066,12 @@ async function renderVideoRealtime({
     audioSource.start(0);
     if (bgmSource) bgmSource.start(0);
     const audioStartCtxTime = audioContext.currentTime;
+    const effectiveSfx =
+      (!sfx || sfx.mode === 'none') && (retentionGraphics?.patternInterrupts || retentionGraphics?.iconPops)
+        ? { mode: 'both', volume: sfx?.volume ?? 0.6 }
+        : sfx;
     scheduleSfx(audioContext, audioDestination, {
-      rows, slides, textOverlays, hookStyle, sfx, offset: audioStartCtxTime,
+      rows, slides, textOverlays, hookStyle, sfx: effectiveSfx, offset: audioStartCtxTime,
     });
 
     function renderLoop() {
@@ -1056,6 +1117,7 @@ async function renderVideoRealtime({
         slideFilters,
         brand,
         logoImg,
+        retentionGraphics,
       });
 
       if (elapsed >= duration + 0.25) {
