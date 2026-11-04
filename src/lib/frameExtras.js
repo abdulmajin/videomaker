@@ -5,7 +5,7 @@
 // ─── Modern Animated Bottom Captions ─────────────────────────────────────────
 
 const MAX_PHRASE_WORDS = 6;
-const PHRASE_GAP_S = 0.55;
+const PHRASE_GAP_S = 0.22;
 
 const LEGACY_CAPTION_MAP = {
   'karaoke': 'hormozi-pop',
@@ -20,7 +20,7 @@ export function normalizeCaptionStyle(style) {
   return LEGACY_CAPTION_MAP[style] || style;
 }
 
-// Splits transcript words into short on-screen phrases. Cached per words array.
+// Splits transcript words into short on-screen phrases respecting slide & clause boundaries.
 const phraseCache = new WeakMap();
 function getPhrases(words) {
   let phrases = phraseCache.get(words);
@@ -31,15 +31,26 @@ function getPhrases(words) {
     const text = String(w.text || '').trim();
     if (!text) continue;
     const prev = cur[cur.length - 1];
+    const diffSlide =
+      prev &&
+      w.slideIndex != null &&
+      prev.slideIndex != null &&
+      w.slideIndex !== prev.slideIndex;
     if (
       cur.length >= MAX_PHRASE_WORDS ||
+      diffSlide ||
       (prev && w.start - prev.end > PHRASE_GAP_S) ||
-      (prev && /[.!?]$/.test(prev.text))
+      (prev && /[.,!?;:–—]["']?$/.test(prev.text))
     ) {
-      phrases.push(cur);
+      if (cur.length) phrases.push(cur);
       cur = [];
     }
-    cur.push({ text, start: w.start, end: Math.max(w.end ?? w.start, w.start + 0.06) });
+    cur.push({
+      text,
+      start: w.start,
+      end: Math.max(w.end ?? w.start, w.start + 0.06),
+      slideIndex: w.slideIndex,
+    });
   }
   if (cur.length) phrases.push(cur);
   phraseCache.set(words, phrases);
@@ -82,31 +93,40 @@ function buildSyntheticPhrases(slideText, slideStart = 0, slideEnd = 0) {
 }
 
 function resolveActivePhrase({ time, words, slideText, slideStart = 0, slideEnd = 0 }) {
-  // 1. Try Whisper word timestamps first if available in the current slide window
+  // 1. Use acoustic/script-aligned word timestamps when available
   if (words && words.length > 0) {
     const phrases = getPhrases(words);
-    let lo = 0,
-      hi = phrases.length - 1,
-      idx = -1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (phrases[mid][0].start <= time + 0.05) {
-        idx = mid;
-        lo = mid + 1;
-      } else {
-        hi = mid - 1;
+    if (phrases.length > 0) {
+      let lo = 0,
+        hi = phrases.length - 1,
+        idx = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (phrases[mid][0].start <= time + 0.06) {
+          idx = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
       }
-    }
-    if (idx >= 0) {
-      const phrase = phrases[idx];
-      const phraseEnd = phrase[phrase.length - 1].end;
-      if (time <= phraseEnd + 0.45) {
-        return phrase;
+      if (idx >= 0) {
+        const phrase = phrases[idx];
+        const phraseStart = phrase[0].start;
+        const phraseEnd = phrase[phrase.length - 1].end;
+        // Ensure phrase belongs to the active slide window (prevents bleeding across slides)
+        const inSlideWindow =
+          slideEnd <= slideStart ||
+          (phraseEnd >= slideStart - 0.12 && phraseStart <= slideEnd + 0.12);
+        if (inSlideWindow && time <= phraseEnd + 0.35) {
+          return phrase;
+        }
       }
+      // Do NOT fall through to buildSyntheticPhrases during natural silence pauses when words exist!
+      return null;
     }
   }
 
-  // 2. Fall back to synthetic timed phrases built from slideText
+  // 2. Fall back to synthetic timed phrases built from slideText ONLY when no aligned words exist
   if (slideText && String(slideText).trim()) {
     const synth = buildSyntheticPhrases(slideText, slideStart, slideEnd);
     if (!synth.length) return null;

@@ -2,7 +2,7 @@ import { useMemo, useRef, useState, useEffect, useCallback } from 'react';
 import { readDoc } from '../lib/readDoc';
 import { parseScript, matchImages } from '../lib/parseScript';
 import { decodeAudio } from '../lib/audio';
-import { alignSlides } from '../lib/align';
+import { alignSlides, alignWordsToSlides, extractSpeechSegments } from '../lib/align';
 import { preloadImages, drawVideoFrame, createDefaultTextOverlay } from '../lib/renderVideo';
 import { generateSlideImage } from '../lib/imageGen';
 import { synthesizeSpeechToWav, startMicrophoneRecording } from '../lib/tts';
@@ -304,13 +304,18 @@ export default function SectionEditor({
 
     try {
       const { samples, duration } = await decodeAudio(section.audio);
-      const words = await transcribeFn(samples, whisperModel, setTranscribeStatus);
-      const aligned = alignSlides(slides, words, duration);
+      // Extract acoustic speech segments BEFORE transferring samples.buffer to the Whisper worker
+      const speechSegments = extractSpeechSegments(samples, 16000, slides.length);
+      const rawWords = await transcribeFn(samples, whisperModel, setTranscribeStatus);
+      const aligned = alignSlides(slides, rawWords, duration, speechSegments);
+      const alignedWords = alignWordsToSlides(slides, aligned, rawWords, duration, speechSegments);
 
       onUpdateSection((prev) => ({
         ...prev,
         duration,
-        words,
+        speechSegments,
+        rawWords,
+        words: alignedWords,
         rows: aligned,
       }));
 
@@ -717,10 +722,22 @@ export default function SectionEditor({
               setTimeout(() => renderCurrentPreview(currentTime), 20);
             }}
             onRealign={() => {
-              onUpdateSection((prev) => ({
-                ...prev,
-                rows: alignSlides(slides, prev.words || [], prev.duration || 0),
-              }));
+              onUpdateSection((prev) => {
+                const segs = prev.speechSegments || [];
+                const aligned = alignSlides(slides, prev.words || [], prev.duration || 0, segs);
+                const alignedWords = alignWordsToSlides(
+                  slides,
+                  aligned,
+                  prev.words || [],
+                  prev.duration || 0,
+                  segs
+                );
+                return {
+                  ...prev,
+                  rows: aligned,
+                  words: alignedWords,
+                };
+              });
               setTimeout(() => renderCurrentPreview(currentTime), 20);
             }}
             onSeek={(t) => {
@@ -784,11 +801,29 @@ export default function SectionEditor({
                   }
                 }}
                 onUpdateRows={(newRows, newDuration) => {
-                  onUpdateSection(prev => ({
-                    ...prev,
-                    rows: newRows,
-                    duration: newDuration,
-                  }));
+                  onUpdateSection((prev) => {
+                    const cleanedRows = (newRows || []).map((r, idx) => {
+                      const oldR = prev.rows?.[idx];
+                      if (oldR && Math.abs((oldR.start ?? 0) - (r.start ?? 0)) > 0.04) {
+                        const { segRange, speechStart, speechEnd, ...rest } = r;
+                        return rest;
+                      }
+                      return r;
+                    });
+                    const nextWords = alignWordsToSlides(
+                      slides,
+                      cleanedRows,
+                      prev.words || [],
+                      newDuration || prev.duration || 0,
+                      prev.speechSegments || []
+                    );
+                    return {
+                      ...prev,
+                      rows: cleanedRows,
+                      words: nextWords,
+                      duration: newDuration,
+                    };
+                  });
                   setTimeout(() => renderCurrentPreview(currentTime), 20);
                 }}
                 customTextOverlays={section.customTextOverlays || []}
