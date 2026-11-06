@@ -696,6 +696,8 @@ export default function App() {
         words: mergedData.words || [],
         textOverlays: mergedData.textOverlays || {},
         customTextOverlays: mergedData.customTextOverlays || [],
+        colorGrade,
+        slideFilters: mergedData.slideFilters || {},
         onProgress: (pct, msg) => setSaveNotice(`⏳ ${msg} (${pct}%)`),
       });
       downloadBlob(res.blob, res.filename);

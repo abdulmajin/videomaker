@@ -465,6 +465,8 @@ export default function SectionEditor({
         words: section.words || [],
         textOverlays: section.textOverlays || {},
         customTextOverlays: section.customTextOverlays || [],
+        colorGrade: look.colorGrade || 'none',
+        slideFilters: section.slideFilters || {},
         onProgress: (_pct, msg) => setCapCutStatus(msg),
       });
       downloadBlob(res.blob, res.filename);
