@@ -47,6 +47,7 @@ import { SFX_MODES } from './lib/sfx';
 import { supportsFastExport } from './lib/fastExport';
 import { mergeSections, isReadySection, dataUrlToBlob, overlaysToStudioLayers } from './lib/mergeSections';
 import { createZipBlob, readZip, isZipBlob, extFromMime, mimeFromName, safeEntryName } from './lib/projectZip';
+import { exportToCapCutProjectZip } from './lib/capcutExport';
 
 // ─── Helpers: resolve a blob:/data:/http URL to a raw Blob (for project save) ──
 async function urlToBlob(url) {
@@ -189,6 +190,7 @@ export default function App() {
 
   // Video Export
   const [isExporting, setIsExporting] = useState(false);
+  const [isExportingCapCut, setIsExportingCapCut] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportStatus, setExportStatus] = useState('');
   const [resolution, setResolution] = useState('720p');
@@ -671,6 +673,40 @@ export default function App() {
         a.click();
       }, idx * 250);
     });
+  };
+
+  // Export Merged Project to CapCut Desktop (.zip)
+  const handleExportCapCut = async () => {
+    if (!mergedData?.rows?.length) return;
+    setIsExportingCapCut(true);
+    setSaveNotice('⏳ Packing CapCut Desktop project…');
+    try {
+      const res = await exportToCapCutProjectZip({
+        projectName: projectTitle || 'Video_Project',
+        aspectRatio,
+        duration: mergedData.duration || 1,
+        rows: mergedData.rows,
+        slides: mergedData.slides,
+        effectiveImageUrls: mergedData.effectiveImageUrls,
+        audioBlob: mergedData.audioBlob,
+        audioUrl: mergedData.audioUrl,
+        bgmBlob: bgmFile,
+        bgmUrl,
+        bgmVolume,
+        words: mergedData.words || [],
+        textOverlays: mergedData.textOverlays || {},
+        customTextOverlays: mergedData.customTextOverlays || [],
+        onProgress: (pct, msg) => setSaveNotice(`⏳ ${msg} (${pct}%)`),
+      });
+      downloadBlob(res.blob, res.filename);
+      setSaveNotice(`✓ Exported to CapCut (${res.slideCount} slides, ${res.captionCount} captions)!`);
+      setTimeout(() => setSaveNotice(''), 4500);
+    } catch (err) {
+      setSaveNotice('');
+      alert(`CapCut export failed: ${err.message}`);
+    } finally {
+      setIsExportingCapCut(false);
+    }
   };
 
   // Project Save & Load
@@ -1852,6 +1888,16 @@ export default function App() {
                 title="Render a 16:9 widescreen and a 9:16 vertical version one after the other"
               >
                 🎞️ Export 16:9 + 9:16
+              </button>
+
+              <button
+                type="button"
+                className="secondary-btn"
+                disabled={isExporting || isExportingCapCut}
+                onClick={handleExportCapCut}
+                title="Export a ready-to-edit CapCut Desktop draft (.zip) with separate tracks for slides, voiceover, music, and editable captions"
+              >
+                {isExportingCapCut ? '⏳ Packing CapCut…' : '✂️ Export to CapCut (.zip)'}
               </button>
 
               <button

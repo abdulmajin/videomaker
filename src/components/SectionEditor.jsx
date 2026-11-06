@@ -6,6 +6,8 @@ import { alignSlides, alignWordsToSlides, extractSpeechSegments } from '../lib/a
 import { preloadImages, drawVideoFrame, createDefaultTextOverlay } from '../lib/renderVideo';
 import { generateSlideImage } from '../lib/imageGen';
 import { synthesizeSpeechToWav, startMicrophoneRecording } from '../lib/tts';
+import { exportToCapCutProjectZip } from '../lib/capcutExport';
+import { downloadBlob } from '../lib/exportUtils';
 import VisualTimeline from './VisualTimeline';
 import SlideEllipseDrawer from './SlideEllipseDrawer';
 import TextOverlayEditorModal from './TextOverlayEditorModal';
@@ -52,6 +54,8 @@ export default function SectionEditor({
   const [isRecordingMic, setIsRecordingMic] = useState(false);
   const [textEditorOpen, setTextEditorOpen] = useState(false);
   const [selectedTextOverlayId, setSelectedTextOverlayId] = useState(null);
+  const [isExportingCapCut, setIsExportingCapCut] = useState(false);
+  const [capCutStatus, setCapCutStatus] = useState('');
   const recorderRef = useRef(null);
 
   const audioRef = useRef(null);
@@ -443,6 +447,37 @@ export default function SectionEditor({
     renderCurrentPreview(clamped);
   };
 
+  const handleExportSectionCapCut = async () => {
+    if (!section.rows?.length) return;
+    setLocalError('');
+    setIsExportingCapCut(true);
+    setCapCutStatus('Packing CapCut project…');
+    try {
+      const res = await exportToCapCutProjectZip({
+        projectName: displayTitle,
+        aspectRatio,
+        duration: section.duration || 1,
+        rows: section.rows,
+        slides,
+        effectiveImageUrls,
+        audioBlob: section.audio,
+        audioUrl: section.audioUrl,
+        words: section.words || [],
+        textOverlays: section.textOverlays || {},
+        customTextOverlays: section.customTextOverlays || [],
+        onProgress: (_pct, msg) => setCapCutStatus(msg),
+      });
+      downloadBlob(res.blob, res.filename);
+      setCapCutStatus('✓ CapCut project downloaded!');
+      setTimeout(() => setCapCutStatus(''), 3500);
+    } catch (err) {
+      setLocalError(`CapCut export error: ${err.message}`);
+      setCapCutStatus('');
+    } finally {
+      setIsExportingCapCut(false);
+    }
+  };
+
   const defaultTitle = sectionIndex === 0 ? 'Intro' : `Section ${sectionIndex}`;
   const displayTitle = section.title || defaultTitle;
   const isCollapsed = section.isCollapsed || false;
@@ -754,7 +789,19 @@ export default function SectionEditor({
             <div className="section-preview-wrapper">
               <div className="section-preview-header">
                 <h4>🎬 {displayTitle} - Video Preview ({aspectRatio})</h4>
-                <span className="badge badge-info">Preview Only</span>
+                <div className="flex-center-gap">
+                  {capCutStatus && <span className="status-inline">{capCutStatus}</span>}
+                  <button
+                    type="button"
+                    className="secondary-btn small-btn"
+                    disabled={isExportingCapCut}
+                    onClick={handleExportSectionCapCut}
+                    title="Export this section (slides, voiceover, and editable captions) as a CapCut Desktop project (.zip)"
+                  >
+                    {isExportingCapCut ? '⏳ Packing CapCut…' : '✂️ Export to CapCut (.zip)'}
+                  </button>
+                  <span className="badge badge-info">Preview Only</span>
+                </div>
               </div>
 
               <ResizablePreview isVertical={isVertical} className={`video-player-frame section-frame ${isVertical ? 'vertical-frame' : ''}`}>
